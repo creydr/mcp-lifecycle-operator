@@ -79,6 +79,17 @@ var (
 		[]string{"name", "namespace", "reason"},
 	)
 
+	// gatewayBindingFailuresTotal counts gateway binding reconciliation failures.
+	// Labels: name, namespace, reason.
+	gatewayBindingFailuresTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: metricsNamespace,
+			Name:      "gateway_binding_failures_total",
+			Help:      "Total number of gateway binding reconciliation failures.",
+		},
+		[]string{"name", "namespace", "reason"},
+	)
+
 	// reconcileDuration tracks the duration of reconciliation phases.
 	// Labels: phase (ReconcilePhaseValidation / ReconcilePhaseDeployment / ReconcilePhaseService / ReconcilePhaseNetworkPolicy).
 	reconcileDuration = prometheus.NewHistogramVec(
@@ -99,6 +110,7 @@ func init() {
 		deploymentFailuresTotal,
 		serviceFailuresTotal,
 		networkPolicyFailuresTotal,
+		gatewayBindingFailuresTotal,
 		reconcileDuration,
 	)
 }
@@ -132,4 +144,5 @@ func cleanupMetrics(name, namespace string) {
 	deploymentFailuresTotal.DeletePartialMatch(labels)
 	serviceFailuresTotal.DeletePartialMatch(labels)
 	networkPolicyFailuresTotal.DeletePartialMatch(labels)
+	gatewayBindingFailuresTotal.DeletePartialMatch(labels)
 }
