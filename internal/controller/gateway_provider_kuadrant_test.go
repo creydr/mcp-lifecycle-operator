@@ -31,6 +31,9 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
+	gw "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway"
+	gwhttproute "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway/httproute"
+	gwkuadrant "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway/kuadrant"
 )
 
 var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
@@ -46,11 +49,11 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 		return &MCPGatewayBindingReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
-			Providers: []GatewayProvider{
-				&KuadrantProvider{},
+			Providers: []gw.Provider{
+				&gwkuadrant.Provider{},
 			},
-			activeProviders: map[string]GatewayProvider{
-				ProviderKuadrant: &KuadrantProvider{},
+			activeProviders: map[string]gw.Provider{
+				gwkuadrant.ProviderName: &gwkuadrant.Provider{},
 			},
 		}
 	}
@@ -89,7 +92,7 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 
 	AfterEach(func() {
 		reg := &unstructured.Unstructured{}
-		reg.SetGroupVersionKind(mcpServerRegistrationGVK)
+		reg.SetGroupVersionKind(gwkuadrant.MCPServerRegistrationGVK)
 		reg.SetName(bindingName)
 		reg.SetNamespace("default")
 		for _, obj := range []client.Object{
@@ -106,11 +109,11 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 	It("should create an HTTPRoute and MCPServerRegistration", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
-			configKeyToolPrefix:       "mytools_",
+			gw.ConfigKeyGatewayName:        "my-gateway",
+			gw.ConfigKeyGatewayNamespace:   "gateway-ns",
+			gwkuadrant.ConfigKeyToolPrefix: "mytools_",
 		})
-		createBinding(ProviderKuadrant)
+		createBinding(gwkuadrant.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -124,7 +127,7 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 		Expect(string(route.Spec.ParentRefs[0].Name)).To(Equal("my-gateway"))
 
 		reg := &unstructured.Unstructured{}
-		reg.SetGroupVersionKind(mcpServerRegistrationGVK)
+		reg.SetGroupVersionKind(gwkuadrant.MCPServerRegistrationGVK)
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: "default"}, reg)).To(Succeed())
 
 		spec, _, _ := unstructured.NestedMap(reg.Object, "spec")
@@ -153,10 +156,10 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 	It("should create MCPServerRegistration without prefix when not configured", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
+			gw.ConfigKeyGatewayName:      "my-gateway",
+			gw.ConfigKeyGatewayNamespace: "gateway-ns",
 		})
-		createBinding(ProviderKuadrant)
+		createBinding(gwkuadrant.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -165,7 +168,7 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		reg := &unstructured.Unstructured{}
-		reg.SetGroupVersionKind(mcpServerRegistrationGVK)
+		reg.SetGroupVersionKind(gwkuadrant.MCPServerRegistrationGVK)
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: "default"}, reg)).To(Succeed())
 
 		_, found, _ := unstructured.NestedString(reg.Object, "spec", "prefix")
@@ -175,11 +178,11 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 	It("should set URL when hostname is configured", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
-			configKeyHostname:         "mcp.example.com",
+			gw.ConfigKeyGatewayName:      "my-gateway",
+			gw.ConfigKeyGatewayNamespace: "gateway-ns",
+			gw.ConfigKeyHostname:         "mcp.example.com",
 		})
-		createBinding(ProviderKuadrant)
+		createBinding(gwkuadrant.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -195,10 +198,10 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 	It("should not reconcile bindings for other providers", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
+			gw.ConfigKeyGatewayName:      "my-gateway",
+			gw.ConfigKeyGatewayNamespace: "gateway-ns",
 		})
-		createBinding(ProviderHTTPRoute)
+		createBinding(gwhttproute.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -207,7 +210,7 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		reg := &unstructured.Unstructured{}
-		reg.SetGroupVersionKind(mcpServerRegistrationGVK)
+		reg.SetGroupVersionKind(gwkuadrant.MCPServerRegistrationGVK)
 		err = k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: "default"}, reg)
 		Expect(err).To(HaveOccurred())
 		Expect(client.IgnoreNotFound(err)).To(Succeed())
@@ -215,7 +218,7 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 
 	It("should set Registered=False when ConfigMap is missing", func() {
 		createMCPServer()
-		createBinding(ProviderKuadrant)
+		createBinding(gwkuadrant.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -234,11 +237,11 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 	It("should update MCPServerRegistration when ConfigMap changes", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
-			configKeyToolPrefix:       "old_",
+			gw.ConfigKeyGatewayName:        "my-gateway",
+			gw.ConfigKeyGatewayNamespace:   "gateway-ns",
+			gwkuadrant.ConfigKeyToolPrefix: "old_",
 		})
-		createBinding(ProviderKuadrant)
+		createBinding(gwkuadrant.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -247,14 +250,14 @@ var _ = Describe("MCPGatewayBinding Controller (kuadrant)", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		reg := &unstructured.Unstructured{}
-		reg.SetGroupVersionKind(mcpServerRegistrationGVK)
+		reg.SetGroupVersionKind(gwkuadrant.MCPServerRegistrationGVK)
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: "default"}, reg)).To(Succeed())
 		prefix, _, _ := unstructured.NestedString(reg.Object, "spec", "prefix")
 		Expect(prefix).To(Equal("old_"))
 
 		cm := &corev1.ConfigMap{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: configMapName, Namespace: "default"}, cm)).To(Succeed())
-		cm.Data[configKeyToolPrefix] = "new_"
+		cm.Data[gwkuadrant.ConfigKeyToolPrefix] = "new_"
 		Expect(k8sClient.Update(ctx, cm)).To(Succeed())
 
 		_, err = r.Reconcile(ctx, reconcile.Request{

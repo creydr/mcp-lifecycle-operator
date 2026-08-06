@@ -45,14 +45,11 @@ import (
 
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 	acv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1/applyconfiguration/api/v1alpha1"
+	gw "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway"
 )
 
 const (
 	fieldManager = "mcpserver-controller"
-
-	// defaultMCPPath is the default HTTP path for MCP endpoints, matching the
-	// kubebuilder default on ServerConfig.Path.
-	defaultMCPPath = "/mcp"
 
 	// mcpClientName is the client name sent during MCP handshake.
 	mcpClientName = "mcp-lifecycle-operator"
@@ -345,7 +342,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Build status
 	path := mcpServer.Spec.Config.Path
 	if path == "" {
-		path = defaultMCPPath
+		path = gw.DefaultMCPPath
 	}
 
 	mcpURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d%s",

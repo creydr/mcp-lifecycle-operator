@@ -14,19 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package gateway
 
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -34,25 +31,7 @@ import (
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 )
 
-const (
-	configKeyGatewayName      = "gateway-name"
-	configKeyGatewayNamespace = "gateway-namespace"
-	configKeyHostname         = "hostname"
-)
-
-func extractGatewayConfig(cm *corev1.ConfigMap, configRef string) (gwName, gwNamespace string, err error) {
-	gwName, ok := cm.Data[configKeyGatewayName]
-	if !ok || gwName == "" {
-		return "", "", fmt.Errorf("ConfigMap %q missing required key %q", configRef, configKeyGatewayName)
-	}
-	gwNamespace, ok = cm.Data[configKeyGatewayNamespace]
-	if !ok || gwNamespace == "" {
-		return "", "", fmt.Errorf("ConfigMap %q missing required key %q", configRef, configKeyGatewayNamespace)
-	}
-	return gwName, gwNamespace, nil
-}
-
-func buildHTTPRoute(
+func BuildHTTPRoute(
 	binding *mcpv1alpha1.MCPGatewayBinding,
 	mcpServer *mcpv1alpha1.MCPServer,
 	gwName, gwNamespace string,
@@ -60,7 +39,7 @@ func buildHTTPRoute(
 ) *gatewayv1.HTTPRoute {
 	path := mcpServer.Spec.Config.Path
 	if path == "" {
-		path = defaultMCPPath
+		path = DefaultMCPPath
 	}
 	pathType := gatewayv1.PathMatchPathPrefix
 	gwNS := gatewayv1.Namespace(gwNamespace)
@@ -105,14 +84,14 @@ func buildHTTPRoute(
 		},
 	}
 
-	if hostname, ok := cm.Data[configKeyHostname]; ok && hostname != "" {
+	if hostname, ok := cm.Data[ConfigKeyHostname]; ok && hostname != "" {
 		route.Spec.Hostnames = []gatewayv1.Hostname{gatewayv1.Hostname(hostname)}
 	}
 
 	return route
 }
 
-func reconcileHTTPRoute(ctx context.Context, c client.Client, desired *gatewayv1.HTTPRoute) error {
+func ReconcileHTTPRoute(ctx context.Context, c client.Client, desired *gatewayv1.HTTPRoute) error {
 	logger := log.FromContext(ctx)
 	existing := &gatewayv1.HTTPRoute{}
 	err := c.Get(ctx, client.ObjectKey{Name: desired.Name, Namespace: desired.Namespace}, existing)
@@ -134,62 +113,4 @@ func reconcileHTTPRoute(ctx context.Context, c client.Client, desired *gatewayv1
 		}
 	}
 	return nil
-}
-
-func gatewayURL(cm *corev1.ConfigMap, mcpServer *mcpv1alpha1.MCPServer) string {
-	hostname, ok := cm.Data[configKeyHostname]
-	if !ok || hostname == "" {
-		return ""
-	}
-	path := mcpServer.Spec.Config.Path
-	if path == "" {
-		path = defaultMCPPath
-	}
-	return fmt.Sprintf("http://%s%s", hostname, path)
-}
-
-func reconcileUnstructured(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, desired *unstructured.Unstructured) error {
-	logger := log.FromContext(ctx)
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(gvk)
-	err := c.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: desired.GetNamespace()}, existing)
-	if apierrors.IsNotFound(err) {
-		logger.Info("Creating resource", "kind", gvk.Kind, "name", desired.GetName())
-		return c.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	desiredSpec, _, _ := unstructured.NestedMap(desired.Object, "spec")
-	existingSpec, _, _ := unstructured.NestedMap(existing.Object, "spec")
-	if !equality.Semantic.DeepEqual(existingSpec, desiredSpec) {
-		logger.Info("Updating resource", "kind", gvk.Kind, "name", desired.GetName())
-		if err := unstructured.SetNestedMap(existing.Object, desiredSpec, "spec"); err != nil {
-			return err
-		}
-		return c.Update(ctx, existing)
-	}
-	return nil
-}
-
-func deleteIfExists(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, name, namespace string) error {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(gvk)
-	obj.SetName(name)
-	obj.SetNamespace(namespace)
-	if err := c.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
-		return err
-	}
-	return nil
-}
-
-func parseLabelSelector(selector string) map[string]interface{} {
-	labels := make(map[string]interface{})
-	for _, part := range strings.Split(selector, ",") {
-		part = strings.TrimSpace(part)
-		if kv := strings.SplitN(part, "=", 2); len(kv) == 2 {
-			labels[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
-		}
-	}
-	return labels
 }

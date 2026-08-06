@@ -33,16 +33,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
+	gw "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway"
 )
 
 // MCPGatewayBindingReconciler reconciles MCPGatewayBinding resources by
-// delegating to registered GatewayProvider implementations.
+// delegating to registered gateway.Provider implementations.
 type MCPGatewayBindingReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
-	Providers []GatewayProvider
+	Providers []gw.Provider
 
-	activeProviders map[string]GatewayProvider
+	activeProviders map[string]gw.Provider
 }
 
 // +kubebuilder:rbac:groups=mcp.x-k8s.io,resources=mcpgatewaybindings,verbs=get;list;watch
@@ -83,7 +84,7 @@ func (r *MCPGatewayBindingReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
-	url, err := provider.Reconcile(ctx, ProviderParams{
+	url, err := provider.Reconcile(ctx, gw.ProviderParams{
 		Client:    r.Client,
 		Scheme:    r.Scheme,
 		Binding:   binding,
@@ -133,7 +134,7 @@ func (r *MCPGatewayBindingReconciler) updateBindingStatus(
 func (r *MCPGatewayBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	setupLog := mgr.GetLogger().WithName("setup")
 
-	r.activeProviders = make(map[string]GatewayProvider)
+	r.activeProviders = make(map[string]gw.Provider)
 	for _, p := range r.Providers {
 		if r.crdAvailable(mgr, p) {
 			r.activeProviders[p.Name()] = p
@@ -172,7 +173,7 @@ func (r *MCPGatewayBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return b.Complete(r)
 }
 
-func (r *MCPGatewayBindingReconciler) crdAvailable(mgr ctrl.Manager, p GatewayProvider) bool {
+func (r *MCPGatewayBindingReconciler) crdAvailable(mgr ctrl.Manager, p gw.Provider) bool {
 	for _, gvk := range p.RequiredCRDs() {
 		if _, err := mgr.GetRESTMapper().RESTMapping(gvk.GroupKind(), gvk.Version); err != nil {
 			return false

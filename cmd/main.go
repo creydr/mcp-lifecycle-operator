@@ -43,6 +43,9 @@ import (
 
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 	"github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller"
+	gw "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway"
+	gwhttproute "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway/httproute"
+	gwkuadrant "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway/kuadrant"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -206,9 +209,9 @@ func main() {
 	if err := (&controller.MCPGatewayBindingReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-		Providers: []controller.GatewayProvider{
-			&controller.HTTPRouteProvider{},
-			&controller.KuadrantProvider{},
+		Providers: []gw.Provider{
+			&gwhttproute.Provider{},
+			&gwkuadrant.Provider{},
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPGatewayBinding")

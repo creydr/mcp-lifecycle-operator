@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package kuadrant
 
 import (
 	"context"
@@ -25,36 +25,39 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	gw "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway"
 )
 
 const (
-	configKeyToolPrefix = "tool-prefix"
+	ProviderName        = "kuadrant"
+	ConfigKeyToolPrefix = "tool-prefix"
 )
 
-var mcpServerRegistrationGVK = schema.GroupVersionKind{
+var MCPServerRegistrationGVK = schema.GroupVersionKind{
 	Group:   "mcp.kuadrant.io",
 	Version: "v1alpha1",
 	Kind:    "MCPServerRegistration",
 }
 
-// KuadrantProvider creates Gateway API HTTPRoute resources and Kuadrant
+// Provider creates Gateway API HTTPRoute resources and Kuadrant
 // MCPServerRegistration resources for MCPGatewayBindings.
-type KuadrantProvider struct{}
+type Provider struct{}
 
-var _ GatewayProvider = (*KuadrantProvider)(nil)
+var _ gw.Provider = (*Provider)(nil)
 
-func (p *KuadrantProvider) Name() string { return ProviderKuadrant }
+func (p *Provider) Name() string { return ProviderName }
 
-func (p *KuadrantProvider) RequiredCRDs() []schema.GroupVersionKind {
+func (p *Provider) RequiredCRDs() []schema.GroupVersionKind {
 	return []schema.GroupVersionKind{
 		{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "HTTPRoute"},
-		mcpServerRegistrationGVK,
+		MCPServerRegistrationGVK,
 	}
 }
 
-func (p *KuadrantProvider) OwnedTypes() []client.Object {
+func (p *Provider) OwnedTypes() []client.Object {
 	reg := &unstructured.Unstructured{}
-	reg.SetGroupVersionKind(mcpServerRegistrationGVK)
+	reg.SetGroupVersionKind(MCPServerRegistrationGVK)
 	return []client.Object{
 		&gatewayv1.HTTPRoute{},
 		reg,
@@ -63,21 +66,21 @@ func (p *KuadrantProvider) OwnedTypes() []client.Object {
 
 // +kubebuilder:rbac:groups=mcp.kuadrant.io,resources=mcpserverregistrations,verbs=get;list;watch;create;update;delete
 
-func (p *KuadrantProvider) Reconcile(ctx context.Context, params ProviderParams) (string, error) {
+func (p *Provider) Reconcile(ctx context.Context, params gw.ProviderParams) (string, error) {
 	if params.ConfigMap == nil {
 		return "", fmt.Errorf("spec.configRef is required for %s provider", p.Name())
 	}
 
-	gwName, gwNamespace, err := extractGatewayConfig(params.ConfigMap, params.Binding.Spec.ConfigRef)
+	gwName, gwNamespace, err := gw.ExtractGatewayConfig(params.ConfigMap, params.Binding.Spec.ConfigRef)
 	if err != nil {
 		return "", err
 	}
 
-	httpRoute := buildHTTPRoute(params.Binding, params.MCPServer, gwName, gwNamespace, params.ConfigMap)
+	httpRoute := gw.BuildHTTPRoute(params.Binding, params.MCPServer, gwName, gwNamespace, params.ConfigMap)
 	if err := controllerutil.SetControllerReference(params.Binding, httpRoute, params.Scheme); err != nil {
 		return "", fmt.Errorf("setting controller reference on HTTPRoute: %w", err)
 	}
-	if err := reconcileHTTPRoute(ctx, params.Client, httpRoute); err != nil {
+	if err := gw.ReconcileHTTPRoute(ctx, params.Client, httpRoute); err != nil {
 		return "", err
 	}
 
@@ -85,17 +88,17 @@ func (p *KuadrantProvider) Reconcile(ctx context.Context, params ProviderParams)
 		return "", err
 	}
 
-	return gatewayURL(params.ConfigMap, params.MCPServer), nil
+	return gw.GatewayURL(params.ConfigMap, params.MCPServer), nil
 }
 
-func (p *KuadrantProvider) reconcileMCPServerRegistration(ctx context.Context, params ProviderParams) error {
+func (p *Provider) reconcileMCPServerRegistration(ctx context.Context, params gw.ProviderParams) error {
 	path := params.MCPServer.Spec.Config.Path
 	if path == "" {
-		path = defaultMCPPath
+		path = gw.DefaultMCPPath
 	}
 
-	spec := map[string]interface{}{
-		"targetRef": map[string]interface{}{
+	spec := map[string]any{
+		"targetRef": map[string]any{
 			"group": "gateway.networking.k8s.io",
 			"kind":  "HTTPRoute",
 			"name":  params.Binding.Name,
@@ -103,15 +106,15 @@ func (p *KuadrantProvider) reconcileMCPServerRegistration(ctx context.Context, p
 		"path": path,
 	}
 
-	if prefix, ok := params.ConfigMap.Data[configKeyToolPrefix]; ok && prefix != "" {
+	if prefix, ok := params.ConfigMap.Data[ConfigKeyToolPrefix]; ok && prefix != "" {
 		spec["prefix"] = prefix
 	}
 
 	reg := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": mcpServerRegistrationGVK.Group + "/" + mcpServerRegistrationGVK.Version,
-			"kind":       mcpServerRegistrationGVK.Kind,
-			"metadata": map[string]interface{}{
+		Object: map[string]any{
+			"apiVersion": MCPServerRegistrationGVK.Group + "/" + MCPServerRegistrationGVK.Version,
+			"kind":       MCPServerRegistrationGVK.Kind,
+			"metadata": map[string]any{
 				"name":      params.Binding.Name,
 				"namespace": params.Binding.Namespace,
 			},
@@ -123,5 +126,5 @@ func (p *KuadrantProvider) reconcileMCPServerRegistration(ctx context.Context, p
 		return fmt.Errorf("setting controller reference on MCPServerRegistration: %w", err)
 	}
 
-	return reconcileUnstructured(ctx, params.Client, mcpServerRegistrationGVK, reg)
+	return gw.ReconcileUnstructured(ctx, params.Client, MCPServerRegistrationGVK, reg)
 }

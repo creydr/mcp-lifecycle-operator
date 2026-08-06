@@ -30,6 +30,8 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
+	gw "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway"
+	gwhttproute "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway/httproute"
 )
 
 var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
@@ -45,11 +47,11 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 		return &MCPGatewayBindingReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
-			Providers: []GatewayProvider{
-				&HTTPRouteProvider{},
+			Providers: []gw.Provider{
+				&gwhttproute.Provider{},
 			},
-			activeProviders: map[string]GatewayProvider{
-				ProviderHTTPRoute: &HTTPRouteProvider{},
+			activeProviders: map[string]gw.Provider{
+				gwhttproute.ProviderName: &gwhttproute.Provider{},
 			},
 		}
 	}
@@ -100,10 +102,10 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 	It("should create an HTTPRoute from a binding with httproute provider", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
+			gw.ConfigKeyGatewayName:      "my-gateway",
+			gw.ConfigKeyGatewayNamespace: "gateway-ns",
 		})
-		createBinding(ProviderHTTPRoute)
+		createBinding(gwhttproute.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -139,8 +141,8 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 	It("should ignore bindings with non-httproute provider", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
+			gw.ConfigKeyGatewayName:      "my-gateway",
+			gw.ConfigKeyGatewayNamespace: "gateway-ns",
 		})
 		createBinding("custom-vendor")
 
@@ -158,8 +160,8 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 
 	It("should set Registered=False when MCPServer not found", func() {
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
+			gw.ConfigKeyGatewayName:      "my-gateway",
+			gw.ConfigKeyGatewayNamespace: "gateway-ns",
 		})
 
 		binding := &mcpv1alpha1.MCPGatewayBinding{
@@ -169,7 +171,7 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 			},
 			Spec: mcpv1alpha1.MCPGatewayBindingSpec{
 				MCPServerRef: "nonexistent",
-				Provider:     ProviderHTTPRoute,
+				Provider:     gwhttproute.ProviderName,
 				ConfigRef:    configMapName,
 			},
 		}
@@ -190,7 +192,7 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 
 	It("should set Registered=False when ConfigMap missing", func() {
 		createMCPServer()
-		createBinding(ProviderHTTPRoute)
+		createBinding(gwhttproute.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -209,7 +211,7 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 	It("should set Registered=False when ConfigMap missing required keys", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{"some-key": "some-value"})
-		createBinding(ProviderHTTPRoute)
+		createBinding(gwhttproute.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -222,17 +224,17 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 		registered := meta.FindStatusCondition(binding.Status.Conditions, ConditionTypeRegistered)
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
-		Expect(registered.Message).To(ContainSubstring(configKeyGatewayName))
+		Expect(registered.Message).To(ContainSubstring(gw.ConfigKeyGatewayName))
 	})
 
 	It("should set hostname on HTTPRoute when configured in ConfigMap", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
-			configKeyHostname:         "mcp.example.com",
+			gw.ConfigKeyGatewayName:      "my-gateway",
+			gw.ConfigKeyGatewayNamespace: "gateway-ns",
+			gw.ConfigKeyHostname:         "mcp.example.com",
 		})
-		createBinding(ProviderHTTPRoute)
+		createBinding(gwhttproute.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -256,10 +258,10 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 		Expect(k8sClient.Create(ctx, server)).To(Succeed())
 
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
+			gw.ConfigKeyGatewayName:      "my-gateway",
+			gw.ConfigKeyGatewayNamespace: "gateway-ns",
 		})
-		createBinding(ProviderHTTPRoute)
+		createBinding(gwhttproute.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -275,10 +277,10 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 	It("should update existing HTTPRoute when ConfigMap changes", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "gateway-ns",
+			gw.ConfigKeyGatewayName:      "my-gateway",
+			gw.ConfigKeyGatewayNamespace: "gateway-ns",
 		})
-		createBinding(ProviderHTTPRoute)
+		createBinding(gwhttproute.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -292,7 +294,7 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 
 		cm := &corev1.ConfigMap{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: configMapName, Namespace: "default"}, cm)).To(Succeed())
-		cm.Data[configKeyGatewayName] = "updated-gateway"
+		cm.Data[gw.ConfigKeyGatewayName] = "updated-gateway"
 		Expect(k8sClient.Update(ctx, cm)).To(Succeed())
 
 		_, err = r.Reconcile(ctx, reconcile.Request{
@@ -307,10 +309,10 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 	It("should set Registered=False when gateway-namespace is empty string", func() {
 		createMCPServer()
 		createConfigMap(map[string]string{
-			configKeyGatewayName:      "my-gateway",
-			configKeyGatewayNamespace: "",
+			gw.ConfigKeyGatewayName:      "my-gateway",
+			gw.ConfigKeyGatewayNamespace: "",
 		})
-		createBinding(ProviderHTTPRoute)
+		createBinding(gwhttproute.ProviderName)
 
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{
@@ -323,7 +325,7 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 		registered := meta.FindStatusCondition(binding.Status.Conditions, ConditionTypeRegistered)
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
-		Expect(registered.Message).To(ContainSubstring(configKeyGatewayNamespace))
+		Expect(registered.Message).To(ContainSubstring(gw.ConfigKeyGatewayNamespace))
 	})
 
 	It("should set Registered=False when configRef is empty", func() {
@@ -336,7 +338,7 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 			},
 			Spec: mcpv1alpha1.MCPGatewayBindingSpec{
 				MCPServerRef: mcpServerName,
-				Provider:     ProviderHTTPRoute,
+				Provider:     gwhttproute.ProviderName,
 			},
 		}
 		Expect(k8sClient.Create(ctx, binding)).To(Succeed())

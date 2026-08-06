@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
+	gwhttproute "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/gateway/httproute"
 )
 
 var _ = Describe("MCPServer Controller - Gateway", func() {
@@ -44,7 +45,7 @@ var _ = Describe("MCPServer Controller - Gateway", func() {
 		BeforeEach(func() {
 			resource := newTestMCPServer(resourceName)
 			resource.Spec.Gateway = &mcpv1alpha1.GatewaySpec{
-				ClassName: ProviderHTTPRoute,
+				ClassName: gwhttproute.ProviderName,
 				ConfigRef: "gw-config",
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
@@ -73,7 +74,7 @@ var _ = Describe("MCPServer Controller - Gateway", func() {
 			}, binding)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(binding.Spec.MCPServerRef).To(Equal(resourceName))
-			Expect(binding.Spec.Provider).To(Equal(ProviderHTTPRoute))
+			Expect(binding.Spec.Provider).To(Equal(gwhttproute.ProviderName))
 			Expect(binding.Spec.ConfigRef).To(Equal("gw-config"))
 
 			ownerRef := metav1.GetControllerOf(binding)
@@ -179,7 +180,7 @@ var _ = Describe("MCPServer Controller - Gateway", func() {
 		BeforeEach(func() {
 			resource := newTestMCPServer(resourceName)
 			resource.Spec.Gateway = &mcpv1alpha1.GatewaySpec{
-				ClassName: ProviderHTTPRoute,
+				ClassName: gwhttproute.ProviderName,
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 		})
@@ -228,7 +229,7 @@ var _ = Describe("MCPServer Controller - Gateway", func() {
 			Expect(status.condition.Status).To(Equal(metav1.ConditionFalse))
 			Expect(status.condition.Reason).To(Equal(ReasonGatewayNotRegistered))
 			Expect(status.bindingStatus).NotTo(BeNil())
-			Expect(status.bindingStatus.Provider).To(Equal(ProviderHTTPRoute))
+			Expect(status.bindingStatus.Provider).To(Equal(gwhttproute.ProviderName))
 		})
 
 		It("should return Registered when binding has Registered=True", func() {
@@ -278,7 +279,7 @@ var _ = Describe("MCPServer Controller - Gateway", func() {
 		BeforeEach(func() {
 			resource := newTestMCPServer(resourceName)
 			resource.Spec.Gateway = &mcpv1alpha1.GatewaySpec{
-				ClassName: ProviderHTTPRoute,
+				ClassName: gwhttproute.ProviderName,
 			}
 			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 		})
@@ -311,7 +312,7 @@ var _ = Describe("MCPServer Controller - Gateway", func() {
 			Expect(gwCond.Status).To(Equal(metav1.ConditionFalse))
 
 			Expect(mcpServer.Status.GatewayBinding).NotTo(BeNil())
-			Expect(mcpServer.Status.GatewayBinding.Provider).To(Equal(ProviderHTTPRoute))
+			Expect(mcpServer.Status.GatewayBinding.Provider).To(Equal(gwhttproute.ProviderName))
 		})
 
 		It("should reflect gateway URL into MCPServer address when binding is registered", func() {

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package gateway
 
 import (
 	"context"
@@ -27,10 +27,12 @@ import (
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 )
 
-// GatewayProvider defines the interface for gateway integration providers.
+const DefaultMCPPath = "/mcp"
+
+// Provider defines the interface for gateway integration providers.
 // Each provider creates provider-specific resources (e.g., HTTPRoute, policies)
 // for MCPGatewayBindings that match its name.
-type GatewayProvider interface {
+type Provider interface {
 	// Name returns the provider identifier, matching MCPGatewayBinding.Spec.Provider.
 	Name() string
 

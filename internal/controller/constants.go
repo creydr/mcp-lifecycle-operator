@@ -35,14 +35,6 @@ const (
 	ReconcilePhaseGatewayBinding = "gatewaybinding"
 )
 
-// ProviderHTTPRoute is the provider name for the reference Gateway API HTTPRoute
-// integration controller.
-const ProviderHTTPRoute = "httproute"
-
-// ProviderKuadrant is the provider name for the Kuadrant gateway integration
-// controller. It creates an HTTPRoute and an MCPServerRegistration.
-const ProviderKuadrant = "kuadrant"
-
 // Gateway integration condition types and reasons.
 const (
 	ConditionTypeRegistered        = "Registered"
