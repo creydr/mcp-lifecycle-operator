@@ -208,6 +208,7 @@ func main() {
 		Scheme: mgr.GetScheme(),
 		Providers: []controller.GatewayProvider{
 			&controller.HTTPRouteProvider{},
+			&controller.KuadrantProvider{},
 		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPGatewayBinding")

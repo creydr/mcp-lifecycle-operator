@@ -78,6 +78,7 @@ var _ = BeforeSuite(func() {
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "..", "config", "crd", "bases"),
 			gatewayAPICRDPath(),
+			filepath.Join("testdata", "kuadrant-crds"),
 		},
 		ErrorIfCRDPathMissing: true,
 	}
