@@ -168,6 +168,71 @@ kubectl get httproutes
 kubectl get mcpserver my-mcp-server -o jsonpath='{.status.address.url}'
 ```
 
+## Kuadrant Provider: `kuadrant`
+
+The operator includes a [Kuadrant](https://kuadrant.io/) integration that creates an HTTPRoute and an [MCPServerRegistration](https://github.com/Kuadrant/mcp-gateway) to register the MCP server with Kuadrant's mcp-gateway for tool aggregation.
+
+### Prerequisites
+
+- [Gateway API CRDs](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api) installed on the cluster
+- [Kuadrant mcp-gateway](https://github.com/Kuadrant/mcp-gateway) installed (provides the MCPServerRegistration CRD)
+- A Gateway resource deployed and managed by a gateway controller (e.g., Istio, Envoy Gateway)
+
+!!! note
+    The operator checks for both HTTPRoute and MCPServerRegistration CRDs at startup. If either is missing, the `kuadrant` provider is skipped.
+
+### ConfigMap Format
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-gateway-config
+  namespace: default
+data:
+  gateway-name: my-gateway
+  gateway-namespace: gateway-system
+  hostname: mcp.example.com
+  tool-prefix: myserver_
+```
+
+| Key                 | Required | Description                                                |
+|---------------------|----------|------------------------------------------------------------|
+| `gateway-name`      | Yes      | Name of the existing Gateway resource                       |
+| `gateway-namespace` | Yes      | Namespace where the Gateway resource lives                   |
+| `hostname`          | No       | Hostname to set on the HTTPRoute for routing                 |
+| `tool-prefix`       | No       | Prefix for federated tool names (e.g., `myserver_`)          |
+
+### What It Creates
+
+For each registered binding, the controller creates:
+
+1. An **HTTPRoute** that routes traffic from the Gateway to the MCPServer's Service (same as the `httproute` provider)
+2. An **MCPServerRegistration** (`mcp.kuadrant.io/v1alpha1`) that registers the MCP server with Kuadrant's mcp-gateway, targeting the HTTPRoute
+
+Both resources are owned by the MCPGatewayBinding for cascading deletion.
+
+### Example
+
+```yaml
+apiVersion: mcp.x-k8s.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: my-mcp-server
+  namespace: default
+spec:
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: quay.io/containers/kubernetes_mcp_server:latest
+  config:
+    port: 8080
+    path: /mcp
+  gateway:
+    className: kuadrant
+    configRef: mcp-gateway-config
+```
+
 ## Implementing a Custom Provider
 
 To add support for a different gateway or ingress system:
