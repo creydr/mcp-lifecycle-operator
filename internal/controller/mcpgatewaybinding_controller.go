@@ -21,43 +21,34 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 )
 
-const (
-	configKeyGatewayName      = "gateway-name"
-	configKeyGatewayNamespace = "gateway-namespace"
-	configKeyHostname         = "hostname"
-)
-
-// MCPGatewayBindingReconciler reconciles MCPGatewayBinding resources with
-// provider "httproute". It creates Gateway API HTTPRoute resources that route
-// traffic from a Gateway to the MCPServer's Service.
+// MCPGatewayBindingReconciler reconciles MCPGatewayBinding resources by
+// delegating to registered GatewayProvider implementations.
 type MCPGatewayBindingReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
+	Providers []GatewayProvider
+
+	activeProviders map[string]GatewayProvider
 }
 
 // +kubebuilder:rbac:groups=mcp.x-k8s.io,resources=mcpgatewaybindings,verbs=get;list;watch
 // +kubebuilder:rbac:groups=mcp.x-k8s.io,resources=mcpgatewaybindings/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mcp.x-k8s.io,resources=mcpservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;delete
 
 func (r *MCPGatewayBindingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -70,11 +61,12 @@ func (r *MCPGatewayBindingReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	if binding.Spec.Provider != ProviderHTTPRoute {
+	provider, ok := r.activeProviders[binding.Spec.Provider]
+	if !ok {
 		return ctrl.Result{}, nil
 	}
 
-	logger.Info("Reconciling MCPGatewayBinding", "name", binding.Name, "namespace", binding.Namespace)
+	logger.Info("Reconciling MCPGatewayBinding", "name", binding.Name, "namespace", binding.Namespace, "provider", binding.Spec.Provider)
 
 	mcpServer := &mcpv1alpha1.MCPServer{}
 	if err := r.Get(ctx, client.ObjectKey{Name: binding.Spec.MCPServerRef, Namespace: binding.Namespace}, mcpServer); err != nil {
@@ -82,111 +74,28 @@ func (r *MCPGatewayBindingReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			fmt.Sprintf("MCPServer %q not found: %v", binding.Spec.MCPServerRef, err))
 	}
 
-	configMap := &corev1.ConfigMap{}
-	if binding.Spec.ConfigRef == "" {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			"spec.configRef is required for httproute provider")
-	}
-	if err := r.Get(ctx, client.ObjectKey{Name: binding.Spec.ConfigRef, Namespace: binding.Namespace}, configMap); err != nil {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			fmt.Sprintf("ConfigMap %q not found: %v", binding.Spec.ConfigRef, err))
-	}
-
-	gwName, ok := configMap.Data[configKeyGatewayName]
-	if !ok || gwName == "" {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyGatewayName))
-	}
-	gwNamespace, ok := configMap.Data[configKeyGatewayNamespace]
-	if !ok || gwNamespace == "" {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyGatewayNamespace))
-	}
-
-	path := mcpServer.Spec.Config.Path
-	if path == "" {
-		path = defaultMCPPath
-	}
-	pathType := gatewayv1.PathMatchPathPrefix
-
-	gwNS := gatewayv1.Namespace(gwNamespace)
-	port := mcpServer.Spec.Config.Port
-
-	httpRoute := &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      binding.Name,
-			Namespace: binding.Namespace,
-		},
-		Spec: gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{
-					{
-						Name:      gatewayv1.ObjectName(gwName),
-						Namespace: &gwNS,
-					},
-				},
-			},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					Matches: []gatewayv1.HTTPRouteMatch{
-						{
-							Path: &gatewayv1.HTTPPathMatch{
-								Type:  &pathType,
-								Value: &path,
-							},
-						},
-					},
-					BackendRefs: []gatewayv1.HTTPBackendRef{
-						{
-							BackendRef: gatewayv1.BackendRef{
-								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Name: gatewayv1.ObjectName(mcpServer.Name),
-									Port: &port,
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	if hostname, ok := configMap.Data[configKeyHostname]; ok && hostname != "" {
-		httpRoute.Spec.Hostnames = []gatewayv1.Hostname{gatewayv1.Hostname(hostname)}
-	}
-
-	if err := controllerutil.SetControllerReference(binding, httpRoute, r.Scheme); err != nil {
-		return ctrl.Result{}, fmt.Errorf("setting controller reference on HTTPRoute: %w", err)
-	}
-
-	existing := &gatewayv1.HTTPRoute{}
-	err := r.Get(ctx, client.ObjectKey{Name: httpRoute.Name, Namespace: httpRoute.Namespace}, existing)
-	if apierrors.IsNotFound(err) {
-		logger.Info("Creating HTTPRoute", "name", httpRoute.Name)
-		if err := r.Create(ctx, httpRoute); err != nil {
+	var configMap *corev1.ConfigMap
+	if binding.Spec.ConfigRef != "" {
+		configMap = &corev1.ConfigMap{}
+		if err := r.Get(ctx, client.ObjectKey{Name: binding.Spec.ConfigRef, Namespace: binding.Namespace}, configMap); err != nil {
 			return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-				fmt.Sprintf("Failed to create HTTPRoute: %v", err))
-		}
-	} else if err != nil {
-		return ctrl.Result{}, err
-	} else {
-		if !equality.Semantic.DeepEqual(existing.Spec, httpRoute.Spec) {
-			logger.Info("Updating HTTPRoute", "name", httpRoute.Name)
-			existing.Spec = httpRoute.Spec
-			if err := r.Update(ctx, existing); err != nil {
-				return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-					fmt.Sprintf("Failed to update HTTPRoute: %v", err))
-			}
+				fmt.Sprintf("ConfigMap %q not found: %v", binding.Spec.ConfigRef, err))
 		}
 	}
 
-	url := ""
-	if hostname, ok := configMap.Data[configKeyHostname]; ok && hostname != "" {
-		url = fmt.Sprintf("http://%s%s", hostname, path)
+	url, err := provider.Reconcile(ctx, ProviderParams{
+		Client:    r.Client,
+		Scheme:    r.Scheme,
+		Binding:   binding,
+		MCPServer: mcpServer,
+		ConfigMap: configMap,
+	})
+	if err != nil {
+		return ctrl.Result{}, r.setNotRegistered(ctx, binding, err.Error())
 	}
 
 	return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionTrue,
-		ReasonGatewayRegistered, "HTTPRoute created", url)
+		ReasonGatewayRegistered, fmt.Sprintf("%s resources created", provider.Name()), url)
 }
 
 func (r *MCPGatewayBindingReconciler) setNotRegistered(
@@ -220,27 +129,28 @@ func (r *MCPGatewayBindingReconciler) updateBindingStatus(
 }
 
 // SetupWithManager sets up the controller with the Manager.
-// It checks whether the Gateway API HTTPRoute CRD is installed before
-// registering. If the CRD is not available, the controller is skipped.
+// It activates only providers whose required CRDs are present on the cluster.
 func (r *MCPGatewayBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	httpRouteGVK := schema.GroupVersionKind{
-		Group:   "gateway.networking.k8s.io",
-		Version: "v1",
-		Kind:    "HTTPRoute",
+	setupLog := mgr.GetLogger().WithName("setup")
+
+	r.activeProviders = make(map[string]GatewayProvider)
+	for _, p := range r.Providers {
+		if r.crdAvailable(mgr, p) {
+			r.activeProviders[p.Name()] = p
+			setupLog.Info("Gateway provider activated", "provider", p.Name())
+		} else {
+			setupLog.Info("Gateway provider CRDs not found, skipping",
+				"provider", p.Name())
+		}
 	}
 
-	_, err := mgr.GetRESTMapper().RESTMapping(httpRouteGVK.GroupKind(), httpRouteGVK.Version)
-	if err != nil {
-		setupLog := mgr.GetLogger().WithName("setup")
-		setupLog.Info("Gateway API HTTPRoute CRD not found, skipping MCPGatewayBinding httproute controller. "+
-			"Install Gateway API CRDs and restart the operator to enable gateway integration.",
-			"gvk", httpRouteGVK.String())
+	if len(r.activeProviders) == 0 {
+		setupLog.Info("No gateway providers available, skipping MCPGatewayBinding controller")
 		return nil
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&mcpv1alpha1.MCPGatewayBinding{}).
-		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(r.findBindingsForConfigMap),
@@ -251,8 +161,24 @@ func (r *MCPGatewayBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.findBindingsForMCPServer),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
-		Named("mcpgatewaybinding-httproute").
-		Complete(r)
+		Named("mcpgatewaybinding")
+
+	for _, p := range r.activeProviders {
+		for _, t := range p.OwnedTypes() {
+			b = b.Owns(t)
+		}
+	}
+
+	return b.Complete(r)
+}
+
+func (r *MCPGatewayBindingReconciler) crdAvailable(mgr ctrl.Manager, p GatewayProvider) bool {
+	for _, gvk := range p.RequiredCRDs() {
+		if _, err := mgr.GetRESTMapper().RESTMapping(gvk.GroupKind(), gvk.Version); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *MCPGatewayBindingReconciler) findBindingsForConfigMap(ctx context.Context, obj client.Object) []ctrl.Request {
@@ -262,7 +188,7 @@ func (r *MCPGatewayBindingReconciler) findBindingsForConfigMap(ctx context.Conte
 	}
 	var requests []ctrl.Request
 	for i := range bindingList.Items {
-		if bindingList.Items[i].Spec.Provider == ProviderHTTPRoute &&
+		if _, ok := r.activeProviders[bindingList.Items[i].Spec.Provider]; ok &&
 			bindingList.Items[i].Spec.ConfigRef == obj.GetName() {
 			requests = append(requests, ctrl.Request{
 				NamespacedName: client.ObjectKeyFromObject(&bindingList.Items[i]),
@@ -279,7 +205,7 @@ func (r *MCPGatewayBindingReconciler) findBindingsForMCPServer(ctx context.Conte
 	}
 	var requests []ctrl.Request
 	for i := range bindingList.Items {
-		if bindingList.Items[i].Spec.Provider == ProviderHTTPRoute &&
+		if _, ok := r.activeProviders[bindingList.Items[i].Spec.Provider]; ok &&
 			bindingList.Items[i].Spec.MCPServerRef == obj.GetName() {
 			requests = append(requests, ctrl.Request{
 				NamespacedName: client.ObjectKeyFromObject(&bindingList.Items[i]),

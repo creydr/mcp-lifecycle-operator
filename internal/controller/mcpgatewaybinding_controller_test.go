@@ -45,6 +45,12 @@ var _ = Describe("MCPGatewayBinding Controller (httproute)", func() {
 		return &MCPGatewayBindingReconciler{
 			Client: k8sClient,
 			Scheme: k8sClient.Scheme(),
+			Providers: []GatewayProvider{
+				&HTTPRouteProvider{},
+			},
+			activeProviders: map[string]GatewayProvider{
+				ProviderHTTPRoute: &HTTPRouteProvider{},
+			},
 		}
 	}
 

@@ -206,6 +206,9 @@ func main() {
 	if err := (&controller.MCPGatewayBindingReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Providers: []controller.GatewayProvider{
+			&controller.HTTPRouteProvider{},
+		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MCPGatewayBinding")
 		os.Exit(1)
