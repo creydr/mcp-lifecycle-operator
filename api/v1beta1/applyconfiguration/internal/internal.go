@@ -56,6 +56,24 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: ref
       type:
         scalar: string
+- name: com.github.kubernetes-sigs.mcp-lifecycle-operator.api.v1beta1.GatewayBindingStatus
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: provider
+      type:
+        scalar: string
+- name: com.github.kubernetes-sigs.mcp-lifecycle-operator.api.v1beta1.GatewaySpec
+  map:
+    fields:
+    - name: configRef
+      type:
+        scalar: string
+    - name: provider
+      type:
+        scalar: string
 - name: com.github.kubernetes-sigs.mcp-lifecycle-operator.api.v1beta1.HealthConfig
   map:
     fields:
@@ -147,6 +165,9 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             scalar: string
+    - name: gateway
+      type:
+        namedType: com.github.kubernetes-sigs.mcp-lifecycle-operator.api.v1beta1.GatewaySpec
     - name: mcp
       type:
         namedType: com.github.kubernetes-sigs.mcp-lifecycle-operator.api.v1beta1.MCPConfig
@@ -179,6 +200,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: deploymentName
       type:
         scalar: string
+    - name: gatewayBinding
+      type:
+        namedType: com.github.kubernetes-sigs.mcp-lifecycle-operator.api.v1beta1.GatewayBindingStatus
     - name: observedGeneration
       type:
         scalar: numeric

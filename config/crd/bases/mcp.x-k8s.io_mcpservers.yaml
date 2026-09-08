@@ -2962,6 +2962,31 @@ spec:
                   ExtraLabels are applied to the Deployment metadata, PodTemplate metadata, and Service metadata.
                   The operator-managed keys "app" and "mcp-server" cannot be overridden.
                 type: object
+              gateway:
+                description: |-
+                  Gateway configures gateway integration for this MCPServer.
+                  When set, the operator creates an MCPGatewayBinding resource that
+                  integration controllers watch to provision gateway-specific resources.
+                properties:
+                  configRef:
+                    description: |-
+                      ConfigRef is the name of a ConfigMap in the same namespace containing
+                      gateway-specific configuration. The ConfigMap is referenced by the
+                      MCPGatewayBinding and read by the integration controller.
+                    maxLength: 253
+                    type: string
+                  provider:
+                    description: |-
+                      Provider identifies which gateway integration controller should handle
+                      this MCPServer. The operator creates an MCPGatewayBinding with this value
+                      as spec.provider. Integration controllers filter bindings by provider name.
+                      Example: "httproute" for the reference Gateway API HTTPRoute controller.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - provider
+                type: object
               mcp:
                 description: |-
                   MCP defines Model Context Protocol specific properties of the server.
@@ -4494,9 +4519,11 @@ spec:
                 properties:
                   url:
                     description: |-
-                      URL is the cluster-internal address of the MCP server service.
-                      Format: <scheme>://<servicename>.<namespace>.svc.cluster.local:<port>/<path>
+                      URL is the address of the MCP server.
+                      When no gateway is configured, this is the cluster-internal service address
+                      (e.g. <scheme>://<servicename>.<namespace>.svc.cluster.local:<port>/<path>).
                       The scheme is "https" when TLS is enabled, "http" otherwise.
+                      When a gateway provider is active, this is the external gateway address.
                     type: string
                 type: object
               conditions:
@@ -4511,6 +4538,7 @@ spec:
                   - "Verified": The MCP endpoint completed the protocol handshake and is
                     reachable - the signal a Gateway or client uses before routing traffic
                     to it.
+                  - "GatewayRegistered": Gateway integration is active (only when spec.gateway is set).
 
                   Each condition carries a Reason and a human-readable Message. The set of
                   reasons is an implementation detail of the controller and is intentionally
@@ -4579,6 +4607,22 @@ spec:
                 description: DeploymentName is the name of the Deployment created
                   for this MCPServer.
                 type: string
+              gatewayBinding:
+                description: |-
+                  GatewayBinding contains the status of the MCPGatewayBinding created for
+                  this MCPServer, when spec.gateway is configured.
+                properties:
+                  name:
+                    description: Name is the name of the MCPGatewayBinding resource.
+                    type: string
+                  provider:
+                    description: Provider is the gateway integration provider handling
+                      this binding.
+                    type: string
+                required:
+                - name
+                - provider
+                type: object
               observedGeneration:
                 description: |-
                   ObservedGeneration reflects the generation most recently observed by the controller.

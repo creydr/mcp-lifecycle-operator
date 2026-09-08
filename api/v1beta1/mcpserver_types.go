@@ -422,6 +422,31 @@ type MCPServerSpec struct {
 	// operator-to-MCP-server communication.
 	// +optional
 	Transport *TransportConfig `json:"transport,omitempty"`
+
+	// Gateway configures gateway integration for this MCPServer.
+	// When set, the operator creates an MCPGatewayBinding resource that
+	// integration controllers watch to provision gateway-specific resources.
+	// +optional
+	Gateway *GatewaySpec `json:"gateway,omitempty"`
+}
+
+// GatewaySpec configures gateway integration for an MCPServer.
+type GatewaySpec struct {
+	// Provider identifies which gateway integration controller should handle
+	// this MCPServer. The operator creates an MCPGatewayBinding with this value
+	// as spec.provider. Integration controllers filter bindings by provider name.
+	// Example: "httproute" for the reference Gateway API HTTPRoute controller.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Provider string `json:"provider"`
+
+	// ConfigRef is the name of a ConfigMap in the same namespace containing
+	// gateway-specific configuration. The ConfigMap is referenced by the
+	// MCPGatewayBinding and read by the integration controller.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	ConfigRef string `json:"configRef,omitempty"`
 }
 
 // SecretReference references a Secret in the same namespace as the MCPServer.
@@ -479,9 +504,11 @@ type MCPConfig struct {
 
 // MCPServerAddress contains the address information for the MCPServer.
 type MCPServerAddress struct {
-	// URL is the cluster-internal address of the MCP server service.
-	// Format: <scheme>://<servicename>.<namespace>.svc.cluster.local:<port>/<path>
+	// URL is the address of the MCP server.
+	// When no gateway is configured, this is the cluster-internal service address
+	// (e.g. <scheme>://<servicename>.<namespace>.svc.cluster.local:<port>/<path>).
 	// The scheme is "https" when TLS is enabled, "http" otherwise.
+	// When a gateway provider is active, this is the external gateway address.
 	// +optional
 	URL string `json:"url,omitempty"`
 }
@@ -550,6 +577,11 @@ type MCPServerStatus struct {
 	// +optional
 	ServiceName string `json:"serviceName,omitempty"`
 
+	// GatewayBinding contains the status of the MCPGatewayBinding created for
+	// this MCPServer, when spec.gateway is configured.
+	// +optional
+	GatewayBinding *GatewayBindingStatus `json:"gatewayBinding,omitempty"`
+
 	// Address contains the address of the MCP server service.
 	// +optional
 	Address *MCPServerAddress `json:"address,omitempty"`
@@ -578,6 +610,7 @@ type MCPServerStatus struct {
 	// - "Verified": The MCP endpoint completed the protocol handshake and is
 	//   reachable - the signal a Gateway or client uses before routing traffic
 	//   to it.
+	// - "GatewayRegistered": Gateway integration is active (only when spec.gateway is set).
 	//
 	// Each condition carries a Reason and a human-readable Message. The set of
 	// reasons is an implementation detail of the controller and is intentionally
@@ -589,6 +622,16 @@ type MCPServerStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// GatewayBindingStatus contains the status of the MCPGatewayBinding
+// created for this MCPServer.
+type GatewayBindingStatus struct {
+	// Name is the name of the MCPGatewayBinding resource.
+	Name string `json:"name"`
+
+	// Provider is the gateway integration provider handling this binding.
+	Provider string `json:"provider"`
 }
 
 // +kubebuilder:object:root=true

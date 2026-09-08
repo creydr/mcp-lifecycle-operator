@@ -35,6 +35,9 @@ type MCPServerStatusApplyConfiguration struct {
 	DeploymentName *string `json:"deploymentName,omitempty"`
 	// ServiceName is the name of the Service created for this MCPServer.
 	ServiceName *string `json:"serviceName,omitempty"`
+	// GatewayBinding contains the status of the MCPGatewayBinding created for
+	// this MCPServer, when spec.gateway is configured.
+	GatewayBinding *GatewayBindingStatusApplyConfiguration `json:"gatewayBinding,omitempty"`
 	// Address contains the address of the MCP server service.
 	Address *MCPServerAddressApplyConfiguration `json:"address,omitempty"`
 	// ServerInfo contains identity and capability information reported by the
@@ -55,6 +58,7 @@ type MCPServerStatusApplyConfiguration struct {
 	// - "Verified": The MCP endpoint completed the protocol handshake and is
 	// reachable - the signal a Gateway or client uses before routing traffic
 	// to it.
+	// - "GatewayRegistered": Gateway integration is active (only when spec.gateway is set).
 	//
 	// Each condition carries a Reason and a human-readable Message. The set of
 	// reasons is an implementation detail of the controller and is intentionally
@@ -92,6 +96,14 @@ func (b *MCPServerStatusApplyConfiguration) WithDeploymentName(value string) *MC
 // If called multiple times, the ServiceName field is set to the value of the last call.
 func (b *MCPServerStatusApplyConfiguration) WithServiceName(value string) *MCPServerStatusApplyConfiguration {
 	b.ServiceName = &value
+	return b
+}
+
+// WithGatewayBinding sets the GatewayBinding field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the GatewayBinding field is set to the value of the last call.
+func (b *MCPServerStatusApplyConfiguration) WithGatewayBinding(value *GatewayBindingStatusApplyConfiguration) *MCPServerStatusApplyConfiguration {
+	b.GatewayBinding = value
 	return b
 }
 
