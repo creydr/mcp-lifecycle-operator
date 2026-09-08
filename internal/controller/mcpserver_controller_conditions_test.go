@@ -883,4 +883,18 @@ var _ = Describe("status condition helpers", func() {
 			{Type: ConditionTypeAvailable, Status: metav1.ConditionFalse, Reason: ReasonNetworkPolicyUnavailable, Message: msg},
 		}, msg)).To(BeTrue())
 	})
+
+	It("duplicateGatewayBindingUnavailable returns true only for matching Available=False GatewayNotRegistered message", func() {
+		msg := "Failed to reconcile MCPGatewayBinding: simulated failure"
+		Expect(duplicateGatewayBindingUnavailable(nil, msg)).To(BeFalse())
+		Expect(duplicateGatewayBindingUnavailable([]metav1.Condition{
+			{Type: ConditionTypeAvailable, Status: metav1.ConditionFalse, Reason: ReasonServiceUnavailable, Message: msg},
+		}, msg)).To(BeFalse())
+		Expect(duplicateGatewayBindingUnavailable([]metav1.Condition{
+			{Type: ConditionTypeAvailable, Status: metav1.ConditionFalse, Reason: ReasonGatewayNotRegistered, Message: "other"},
+		}, msg)).To(BeFalse())
+		Expect(duplicateGatewayBindingUnavailable([]metav1.Condition{
+			{Type: ConditionTypeAvailable, Status: metav1.ConditionFalse, Reason: ReasonGatewayNotRegistered, Message: msg},
+		}, msg)).To(BeTrue())
+	})
 })

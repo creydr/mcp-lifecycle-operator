@@ -116,6 +116,16 @@ func WithReplicas(n int32) MCPServerOption {
 	}
 }
 
+// WithGateway sets the gateway integration on the MCPServer.
+func WithGateway(provider, configRef string) MCPServerOption {
+	return func(s *mcpv1beta1.MCPServer) {
+		s.Spec.Gateway = &mcpv1beta1.GatewaySpec{
+			Provider:  provider,
+			ConfigRef: configRef,
+		}
+	}
+}
+
 // NewMCPServer creates an MCPServer with sensible defaults for e2e tests.
 // Defaults: image=DefaultMCPServerImage, port=8080, args=["--port","8080","--read-only"].
 func NewMCPServer(name, namespace string, opts ...MCPServerOption) *mcpv1beta1.MCPServer {

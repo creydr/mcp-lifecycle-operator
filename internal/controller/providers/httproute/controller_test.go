@@ -22,6 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -72,6 +73,12 @@ func setHTTPRouteAccepted(ctx context.Context, route *gatewayv1.HTTPRoute) {
 							Type:               string(gatewayv1.RouteConditionAccepted),
 							Status:             metav1.ConditionTrue,
 							Reason:             "Accepted",
+							LastTransitionTime: metav1.Now(),
+						},
+						{
+							Type:               string(gatewayv1.RouteConditionResolvedRefs),
+							Status:             metav1.ConditionTrue,
+							Reason:             "ResolvedRefs",
 							LastTransitionTime: metav1.Now(),
 						},
 					},
@@ -194,6 +201,15 @@ var _ = Describe("HTTPRoute Provider Controller", func() {
 		registered = meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
+	})
+
+	It("should return early when binding not found", func() {
+		r := newReconciler()
+		result, err := r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: "nonexistent-binding", Namespace: testNamespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(reconcile.Result{}))
 	})
 
 	It("should return early when MCPServer not found", func() {
@@ -408,6 +424,38 @@ var _ = Describe("HTTPRoute Provider Controller", func() {
 		Expect(registered.Message).To(ContainSubstring(configKeyGatewayNamespace))
 	})
 
+	It("should preserve LastTransitionTime when Registered status unchanged", func() {
+		createMCPServer()
+		createBinding(ProviderName)
+
+		r := newReconciler()
+		_, err := r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: bindingName, Namespace: testNamespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		originalTransition := registered.LastTransitionTime
+
+		createConfigMap(map[string]string{"some-key": "some-value"})
+
+		_, err = r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: bindingName, Namespace: testNamespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered = meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Message).To(ContainSubstring(configKeyGatewayName))
+		Expect(registered.LastTransitionTime).To(Equal(originalTransition))
+	})
+
 	It("should set Registered=False when configRef is empty", func() {
 		createMCPServer()
 
@@ -434,6 +482,90 @@ var _ = Describe("HTTPRoute Provider Controller", func() {
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
 		Expect(registered.Message).To(ContainSubstring("configRef is required"))
+	})
+
+	It("should not set Registered=True when Accepted but ResolvedRefs missing", func() {
+		createMCPServer()
+		createConfigMap(map[string]string{
+			configKeyGatewayName:      testGatewayName,
+			configKeyGatewayNamespace: testGatewayNS,
+		})
+		createBinding(ProviderName)
+
+		r := newReconciler()
+		_, err := r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: bindingName, Namespace: testNamespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+
+		By("setting only Accepted=True without ResolvedRefs")
+		route.Status = gatewayv1.HTTPRouteStatus{
+			RouteStatus: gatewayv1.RouteStatus{
+				Parents: []gatewayv1.RouteParentStatus{
+					{
+						ParentRef:      route.Spec.ParentRefs[0],
+						ControllerName: "gateway.example.com/controller",
+						Conditions: []metav1.Condition{
+							{
+								Type:               string(gatewayv1.RouteConditionAccepted),
+								Status:             metav1.ConditionTrue,
+								Reason:             "Accepted",
+								LastTransitionTime: metav1.Now(),
+							},
+						},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Status().Update(ctx, route)).To(Succeed())
+
+		result, err := r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: bindingName, Namespace: testNamespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Reason).To(Equal(reasonRouteNotAccepted))
+	})
+
+	It("should delete stale HTTPRoute when setNotRegistered is called", func() {
+		createMCPServer()
+		createConfigMap(map[string]string{
+			configKeyGatewayName:      testGatewayName,
+			configKeyGatewayNamespace: testGatewayNS,
+		})
+		createBinding(ProviderName)
+
+		r := newReconciler()
+		_, err := r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: bindingName, Namespace: testNamespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+
+		By("removing the ConfigMap to trigger setNotRegistered on next reconcile")
+		cm := &corev1.ConfigMap{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: configMapName, Namespace: testNamespace}, cm)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, cm)).To(Succeed())
+
+		_, err = r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: bindingName, Namespace: testNamespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying the HTTPRoute was cleaned up")
+		err = k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "stale HTTPRoute should be deleted")
 	})
 
 	Describe("findBindingsForConfigMap", func() {
@@ -543,6 +675,20 @@ var _ = Describe("HTTPRoute Provider Controller", func() {
 				configKeyGatewayNamespace: testGatewayNS,
 			})
 			createBinding("custom-vendor")
+
+			r := newReconciler()
+			gw := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testGatewayName,
+					Namespace: testGatewayNS,
+				},
+			}
+			requests := r.findBindingsForGateway(ctx, gw)
+			Expect(requests).To(BeEmpty())
+		})
+
+		It("should skip binding when referenced ConfigMap does not exist", func() {
+			createBinding(ProviderName)
 
 			r := newReconciler()
 			gw := &gatewayv1.Gateway{

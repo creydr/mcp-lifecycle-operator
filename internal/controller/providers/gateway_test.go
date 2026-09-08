@@ -18,11 +18,14 @@ package providers
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -50,6 +53,7 @@ func TestSchemeFromAcceptedRoute(t *testing.T) {
 		gwName      string
 		gwNamespace string
 		want        string
+		wantErr     bool
 	}{
 		{
 			name: "https listener",
@@ -178,6 +182,80 @@ func TestSchemeFromAcceptedRoute(t *testing.T) {
 			gwName: "gw", gwNamespace: "default",
 			want: "http",
 		},
+		{
+			name: "skips non-accepted parent",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{Name: "https", Protocol: gatewayv1.HTTPSProtocolType, Port: 443},
+					},
+				},
+			},
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default"},
+				Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{
+						{
+							ParentRef: gatewayv1.ParentReference{Name: "gw", Namespace: &ns},
+							Conditions: []metav1.Condition{{
+								Type:               string(gatewayv1.RouteConditionAccepted),
+								Status:             metav1.ConditionFalse,
+								Reason:             "Pending",
+								LastTransitionTime: metav1.Now(),
+							}},
+						},
+						{
+							ParentRef:  gatewayv1.ParentReference{Name: "gw", Namespace: &ns},
+							Conditions: []metav1.Condition{acceptedCondition()},
+						},
+					},
+				}},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: "https",
+		},
+		{
+			name:    "gateway not found returns http",
+			gateway: nil,
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default"},
+				Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{{
+						ParentRef:  gatewayv1.ParentReference{Name: "gw", Namespace: &ns},
+						Conditions: []metav1.Condition{acceptedCondition()},
+					}},
+				}},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: "http",
+		},
+		{
+			name: "sectionName matches http listener",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					Listeners: []gatewayv1.Listener{
+						{Name: "web", Protocol: gatewayv1.HTTPProtocolType, Port: 80},
+					},
+				},
+			},
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default"},
+				Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{{
+						ParentRef: gatewayv1.ParentReference{
+							Name:        "gw",
+							Namespace:   &ns,
+							SectionName: sectionNamePtr("web"),
+						},
+						Conditions: []metav1.Condition{acceptedCondition()},
+					}},
+				}},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: "http",
+		},
 	}
 
 	for _, tt := range tests {
@@ -188,11 +266,50 @@ func TestSchemeFromAcceptedRoute(t *testing.T) {
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 
-			got := SchemeFromAcceptedRoute(context.Background(), c, tt.route, tt.gwName, tt.gwNamespace)
+			got, err := SchemeFromAcceptedRoute(context.Background(), c, tt.route, tt.gwName, tt.gwNamespace)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SchemeFromAcceptedRoute() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
 			if got != tt.want {
 				t.Errorf("SchemeFromAcceptedRoute() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSchemeFromAcceptedRoute_TransientError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := gatewayv1.Install(scheme); err != nil {
+		t.Fatal(err)
+	}
+
+	ns := gatewayv1.Namespace("default")
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default"},
+		Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+			Parents: []gatewayv1.RouteParentStatus{{
+				ParentRef:  gatewayv1.ParentReference{Name: "gw", Namespace: &ns},
+				Conditions: []metav1.Condition{acceptedCondition()},
+			}},
+		}},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+			if _, ok := obj.(*gatewayv1.Gateway); ok {
+				return fmt.Errorf("transient API server error")
+			}
+			return nil
+		},
+	}).Build()
+
+	got, err := SchemeFromAcceptedRoute(context.Background(), c, route, "gw", "default")
+	if err == nil {
+		t.Fatalf("expected error for transient Gateway fetch failure, got scheme %q", got)
+	}
+	if got != "" {
+		t.Errorf("expected empty scheme on error, got %q", got)
 	}
 }
 
