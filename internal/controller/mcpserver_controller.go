@@ -472,7 +472,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	r.updateTLSCABundleHash(mcpServer, tlsCABundleHash, availableCondition)
+	r.updateTLSCABundleHash(mcpServer, tlsCABundleHash, verifiedCondition)
 
 	if capDiff != "" {
 		capabilityChangesTotal.WithLabelValues(mcpServer.Name, mcpServer.Namespace).Inc()
@@ -657,17 +657,17 @@ func (r *MCPServerReconciler) emitServerReady(mcpServer *mcpv1beta1.MCPServer) {
 	if r.Recorder == nil {
 		return
 	}
-	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonAvailable, eventActionServerReady, "MCPServer %s is ready; Ready=True", mcpServer.Name)
+	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeNormal, ReasonAvailable, eventActionServerReady, "MCPServer %s is ready; Available=True, Verified=True", mcpServer.Name)
 }
 
 func (r *MCPServerReconciler) maybeEmitDeploymentUnavailableEvent(
 	mcpServer *mcpv1beta1.MCPServer,
-	readyCondition metav1.Condition,
+	availableCondition metav1.Condition,
 ) {
-	if readyCondition.Status == metav1.ConditionFalse &&
-		readyCondition.Reason == ReasonDeploymentUnavailable &&
-		!duplicateDeploymentUnavailable(mcpServer.Status.Conditions, readyCondition.Message) {
-		r.emitDeploymentReconcileFailed(mcpServer, readyCondition.Message)
+	if availableCondition.Status == metav1.ConditionFalse &&
+		availableCondition.Reason == ReasonDeploymentUnavailable &&
+		!duplicateDeploymentUnavailable(mcpServer.Status.Conditions, availableCondition.Message) {
+		r.emitDeploymentReconcileFailed(mcpServer, availableCondition.Message)
 	}
 }
 

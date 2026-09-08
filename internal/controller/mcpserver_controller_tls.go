@@ -99,13 +99,12 @@ func buildTLSTransport(ctx context.Context, reader client.Reader, namespace stri
 func (r *MCPServerReconciler) updateTLSCABundleHash(
 	mcpServer *mcpv1beta1.MCPServer,
 	hash string,
-	readyCondition metav1.Condition,
+	verifiedCondition metav1.Condition,
 ) {
 	key := mcpServer.Namespace + "/" + mcpServer.Name
 	if hash == "" {
 		r.tlsCABundleHashes.Delete(key)
-	} else if readyCondition.Status == metav1.ConditionTrue &&
-		readyCondition.Reason == ReasonAvailable {
+	} else if verifiedCondition.Status == metav1.ConditionTrue {
 		r.tlsCABundleHashes.Store(key, hash)
 	}
 }

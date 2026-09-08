@@ -451,7 +451,7 @@ var _ = Describe("MCPServer Controller - MCP Handshake Validation", func() {
 		Expect(serverReadyEvent).To(ContainSubstring(corev1.EventTypeNormal))
 		Expect(serverReadyEvent).To(ContainSubstring(ReasonAvailable))
 		Expect(serverReadyEvent).To(ContainSubstring(resourceName))
-		Expect(serverReadyEvent).To(ContainSubstring("Ready=True"))
+		Expect(serverReadyEvent).To(ContainSubstring("Available=True, Verified=True"))
 
 		By("Second reconcile — no duplicate ServerReady event")
 		_, err = reconciler.Reconcile(ctx, reconcile.Request{
