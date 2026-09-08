@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	v1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -45,6 +46,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
+	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 	mcpv1beta1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1beta1"
 	acv1beta1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1beta1/applyconfiguration/api/v1beta1"
 )
@@ -136,6 +138,8 @@ const (
 	eventActionServiceReconcileFailed = "ServiceReconcileFailed"
 	// eventActionNetworkPolicyReconcileFailed is the reporting action when NetworkPolicy reconciliation fails.
 	eventActionNetworkPolicyReconcileFailed = "NetworkPolicyReconcileFailed"
+	// eventActionGatewayBindingReconcileFailed is the reporting action when MCPGatewayBinding reconciliation fails.
+	eventActionGatewayBindingReconcileFailed = "GatewayBindingReconcileFailed"
 	// eventActionCapabilityChangeDetected is the reporting action when capability changes are detected.
 	eventActionCapabilityChangeDetected = "CapabilityChangeDetected"
 
@@ -209,6 +213,7 @@ type handshakeRetryState struct {
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=mcp.x-k8s.io,resources=mcpgatewaybindings,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
@@ -243,6 +248,10 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	logger.Info("Reconciling MCPServer", keyName, mcpServer.Name, keyNamespace, mcpServer.Namespace)
+
+	// Best-effort cleanup: delete the gateway binding early when spec.gateway
+	// was removed, so it doesn't linger if validation fails below.
+	r.cleanupGatewayBindingIfRemoved(ctx, mcpServer)
 
 	pendingAcceptedEvent := !acceptedConditionIsTrue(mcpServer.Status.Conditions)
 	pendingServerReadyEvent := !serverIsFullyReady(mcpServer.Status.Conditions)
@@ -309,16 +318,29 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			r.emitDeploymentReconcileFailed(mcpServer, availableCondition.Message)
 		}
 
+		conditions := []*v1ac.ConditionApplyConfiguration{
+			conditionToAC(acceptedCondition),
+			conditionToAC(availableCondition),
+			conditionToAC(verifiedCondition),
+		}
+		if gwCond := meta.FindStatusCondition(mcpServer.Status.Conditions, ConditionTypeGatewayRegistered); gwCond != nil {
+			conditions = append(conditions, conditionToAC(*gwCond))
+		}
+
 		status := acv1beta1.MCPServerStatus().
 			WithObservedGeneration(mcpServer.Generation).
 			WithServiceName(mcpServer.Name).
 			WithReplicas(mcpServer.Status.Replicas).
 			WithReadyReplicas(mcpServer.Status.ReadyReplicas).
-			WithConditions(
-				conditionToAC(acceptedCondition),
-				conditionToAC(availableCondition),
-				conditionToAC(verifiedCondition),
+			WithConditions(conditions...)
+
+		if mcpServer.Status.GatewayBinding != nil {
+			status.WithGatewayBinding(
+				acv1beta1.GatewayBindingStatus().
+					WithName(mcpServer.Status.GatewayBinding.Name).
+					WithProvider(mcpServer.Status.GatewayBinding.Provider),
 			)
+		}
 
 		if statusErr := r.applyStatus(ctx, mcpServer, status); statusErr != nil {
 			logger.Error(statusErr, "Failed to update MCPServer status")
@@ -359,6 +381,20 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	reconcileDuration.With(prometheus.Labels{keyPhase: ReconcilePhaseNetworkPolicy}).Observe(time.Since(networkPolicyStart).Seconds())
 
+	// Reconcile MCPGatewayBinding
+	gatewayBindingStart := time.Now()
+	if err := r.reconcileGatewayBinding(ctx, mcpServer); err != nil {
+		reconcileDuration.With(prometheus.Labels{keyPhase: ReconcilePhaseGatewayBinding}).Observe(time.Since(gatewayBindingStart).Seconds())
+		return r.handleResourceFailure(ctx, mcpServer, existingDeployment, acceptedCondition, err, resourceFailureParams{
+			counter:     gatewayBindingFailuresTotal,
+			reason:      ReasonGatewayNotRegistered,
+			resource:    "MCPGatewayBinding",
+			isDuplicate: duplicateGatewayBindingUnavailable,
+			emitEvent:   r.emitGatewayBindingReconcileFailed,
+		})
+	}
+	reconcileDuration.With(prometheus.Labels{keyPhase: ReconcilePhaseGatewayBinding}).Observe(time.Since(gatewayBindingStart).Seconds())
+
 	// Determine Available condition based on deployment status
 	availableCondition := r.reconcileAvailableCondition(
 		ctx,
@@ -397,6 +433,16 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	recordCondition(mcpServer.Name, mcpServer.Namespace,
 		verifiedCondition.Type, string(verifiedCondition.Status), verifiedCondition.Reason)
 
+	handshakeRetryCount := r.reconcileHandshakeEventsAndRetryCount(mcpServer, &verifiedCondition)
+
+	// Resolve gateway status: condition + binding status + address override.
+	// Must run before the ready-event check so availableCondition reflects
+	// any GatewayNotRegistered override.
+	gwStatus := r.reconcileGatewayCondition(ctx, mcpServer)
+	if gwStatus != nil {
+		availableCondition, mcpURL = r.applyGatewayStatus(mcpServer, gwStatus, availableCondition, mcpURL)
+	}
+
 	// Normal Event once per transition to fully ready (Available + Verified).
 	if pendingServerReadyEvent &&
 		availableCondition.Status == metav1.ConditionTrue &&
@@ -404,19 +450,14 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.emitServerReady(mcpServer)
 	}
 
-	handshakeRetryCount := r.reconcileHandshakeEventsAndRetryCount(mcpServer, &verifiedCondition)
-
 	status := acv1beta1.MCPServerStatus().
 		WithObservedGeneration(mcpServer.Generation).
 		WithDeploymentName(existingDeployment.Name).
 		WithServiceName(mcpServer.Name).
 		WithReplicas(ptr.Deref(existingDeployment.Spec.Replicas, 1)).
-		WithReadyReplicas(existingDeployment.Status.ReadyReplicas).
-		WithConditions(
-			conditionToAC(acceptedCondition),
-			conditionToAC(availableCondition),
-			conditionToAC(verifiedCondition),
-		)
+		WithReadyReplicas(existingDeployment.Status.ReadyReplicas)
+
+	applyGatewayStatusToAC(status, gwStatus, acceptedCondition, availableCondition, verifiedCondition)
 
 	status = withAddressWhenVerified(status, verifiedCondition, mcpURL)
 
@@ -554,16 +595,29 @@ func (r *MCPServerReconciler) reconcilePermanentValidationError(
 
 	prevAccepted := meta.FindStatusCondition(mcpServer.Status.Conditions, ConditionTypeAccepted)
 
+	conditions := []*v1ac.ConditionApplyConfiguration{
+		conditionToAC(acceptedCondition),
+		conditionToAC(availableCondition),
+		conditionToAC(verifiedCondition),
+	}
+	if gwCond := meta.FindStatusCondition(mcpServer.Status.Conditions, ConditionTypeGatewayRegistered); gwCond != nil {
+		conditions = append(conditions, conditionToAC(*gwCond))
+	}
+
 	status := acv1beta1.MCPServerStatus().
 		WithObservedGeneration(mcpServer.Generation).
 		WithServiceName(mcpServer.Name).
 		WithReplicas(mcpServer.Status.Replicas).
 		WithReadyReplicas(mcpServer.Status.ReadyReplicas).
-		WithConditions(
-			conditionToAC(acceptedCondition),
-			conditionToAC(availableCondition),
-			conditionToAC(verifiedCondition),
+		WithConditions(conditions...)
+
+	if mcpServer.Status.GatewayBinding != nil {
+		status.WithGatewayBinding(
+			acv1beta1.GatewayBindingStatus().
+				WithName(mcpServer.Status.GatewayBinding.Name).
+				WithProvider(mcpServer.Status.GatewayBinding.Provider),
 		)
+	}
 
 	if err := r.applyStatus(ctx, mcpServer, status); err != nil {
 		logger.Error(err, "Failed to update MCPServer status")
@@ -696,17 +750,30 @@ func (r *MCPServerReconciler) handleResourceFailure(
 		params.emitEvent(mcpServer, availableCondition.Message)
 	}
 
+	conditions := []*v1ac.ConditionApplyConfiguration{
+		conditionToAC(acceptedCondition),
+		conditionToAC(availableCondition),
+		conditionToAC(verifiedCondition),
+	}
+	if gwCond := meta.FindStatusCondition(mcpServer.Status.Conditions, ConditionTypeGatewayRegistered); gwCond != nil {
+		conditions = append(conditions, conditionToAC(*gwCond))
+	}
+
 	status := acv1beta1.MCPServerStatus().
 		WithObservedGeneration(mcpServer.Generation).
 		WithDeploymentName(existingDeployment.Name).
 		WithServiceName(mcpServer.Name).
 		WithReplicas(ptr.Deref(existingDeployment.Spec.Replicas, 1)).
 		WithReadyReplicas(existingDeployment.Status.ReadyReplicas).
-		WithConditions(
-			conditionToAC(acceptedCondition),
-			conditionToAC(availableCondition),
-			conditionToAC(verifiedCondition),
+		WithConditions(conditions...)
+
+	if mcpServer.Status.GatewayBinding != nil {
+		status.WithGatewayBinding(
+			acv1beta1.GatewayBindingStatus().
+				WithName(mcpServer.Status.GatewayBinding.Name).
+				WithProvider(mcpServer.Status.GatewayBinding.Provider),
 		)
+	}
 
 	if statusErr := r.applyStatus(ctx, mcpServer, status); statusErr != nil {
 		logger.Error(statusErr, "Failed to update MCPServer status")
@@ -723,6 +790,14 @@ func (r *MCPServerReconciler) emitNetworkPolicyReconcileFailed(mcpServer *mcpv1b
 		return
 	}
 	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonNetworkPolicyUnavailable, eventActionNetworkPolicyReconcileFailed,
+		"MCPServer %s: %s", mcpServer.Name, message)
+}
+
+func (r *MCPServerReconciler) emitGatewayBindingReconcileFailed(mcpServer *mcpv1beta1.MCPServer, message string) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Eventf(mcpServer, nil, corev1.EventTypeWarning, ReasonGatewayNotRegistered, eventActionGatewayBindingReconcileFailed,
 		"MCPServer %s: %s", mcpServer.Name, message)
 }
 
@@ -806,6 +881,7 @@ func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		Owns(&mcpv1alpha1.MCPGatewayBinding{}).
 		Watches(
 			&corev1.Pod{},
 			handler.EnqueueRequestsFromMapFunc(r.findMCPServersForPod),
