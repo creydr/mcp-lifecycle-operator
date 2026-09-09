@@ -144,6 +144,7 @@ type gatewayStatus struct {
 	condition      metav1.Condition
 	bindingStatus  *mcpv1beta1.GatewayBindingStatus
 	gatewayAddress string
+	err            error
 }
 
 // applyGatewayStatus records metrics, adjusts the available condition when the
@@ -246,6 +247,7 @@ func (r *MCPServerReconciler) reconcileGatewayCondition(
 				fmt.Sprintf("Failed to check MCPGatewayBinding: %v", err),
 				mcpServer.Generation,
 			),
+			err: err,
 		}
 	}
 
