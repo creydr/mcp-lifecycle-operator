@@ -38,6 +38,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.HealthConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("MCPConfig"):
 		return &apiv1alpha1.MCPConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("MCPGatewayBinding"):
+		return &apiv1alpha1.MCPGatewayBindingApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("MCPGatewayBindingSpec"):
+		return &apiv1alpha1.MCPGatewayBindingSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("MCPGatewayBindingStatus"):
+		return &apiv1alpha1.MCPGatewayBindingStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("MCPServer"):
 		return &apiv1alpha1.MCPServerApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("MCPServerAddress"):

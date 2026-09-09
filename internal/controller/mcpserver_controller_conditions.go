@@ -459,3 +459,9 @@ func duplicateNetworkPolicyUnavailable(conditions []metav1.Condition, message st
 	return prev != nil && prev.Status == metav1.ConditionFalse &&
 		prev.Reason == ReasonNetworkPolicyUnavailable && prev.Message == message
 }
+
+func duplicateGatewayBindingUnavailable(conditions []metav1.Condition, message string) bool {
+	prev := meta.FindStatusCondition(conditions, ConditionTypeAvailable)
+	return prev != nil && prev.Status == metav1.ConditionFalse &&
+		prev.Reason == ReasonGatewayNotRegistered && prev.Message == message
+}
