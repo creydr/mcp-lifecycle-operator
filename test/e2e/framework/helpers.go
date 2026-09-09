@@ -346,15 +346,17 @@ func WaitForEndpointsReady(ctx context.Context, t *testing.T, cfg *envconf.Confi
 }
 
 // CreateGatewayConfigMap creates a ConfigMap with gateway integration settings.
+// It copies all entries from configData except "gateway-class", which is not a
+// ConfigMap key but a provider registration detail.
 func CreateGatewayConfigMap(ctx context.Context, t *testing.T, cfg *envconf.Config,
-	name, namespace, gwName, gwNamespace, hostname string) {
+	name, namespace string, configData map[string]string) {
 	t.Helper()
-	data := map[string]string{
-		"gateway-name":      gwName,
-		"gateway-namespace": gwNamespace,
-	}
-	if hostname != "" {
-		data["hostname"] = hostname
+	data := make(map[string]string, len(configData))
+	for k, v := range configData {
+		if k == "gateway-class" {
+			continue
+		}
+		data[k] = v
 	}
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
