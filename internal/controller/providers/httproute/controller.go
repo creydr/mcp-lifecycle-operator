@@ -227,7 +227,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	if !isHTTPRouteAccepted(route) {
+	if !isHTTPRouteAccepted(route, gwName, gwNamespace) {
 		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
 			reasonRouteNotAccepted, "Waiting for gateway to accept HTTPRoute", "")
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
@@ -339,11 +339,25 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func isHTTPRouteAccepted(route *gatewayv1.HTTPRoute) bool {
+func isHTTPRouteAccepted(route *gatewayv1.HTTPRoute, gwName, gwNamespace string) bool {
 	for _, parent := range route.Status.Parents {
+		if string(parent.ParentRef.Name) != gwName {
+			continue
+		}
+		ns := route.Namespace
+		if parent.ParentRef.Namespace != nil {
+			ns = string(*parent.ParentRef.Namespace)
+		}
+		if ns != gwNamespace {
+			continue
+		}
+
 		accepted := false
 		resolvedRefs := false
 		for _, cond := range parent.Conditions {
+			if cond.ObservedGeneration > 0 && cond.ObservedGeneration < route.Generation {
+				continue
+			}
 			if cond.Type == string(gatewayv1.RouteConditionAccepted) &&
 				cond.Status == metav1.ConditionTrue {
 				accepted = true

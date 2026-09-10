@@ -466,7 +466,11 @@ func isHTTPRouteAccepted(route *gatewayv1.HTTPRoute, gwName, gwNamespace string)
 		if string(parent.ParentRef.Name) != gwName {
 			continue
 		}
-		if parent.ParentRef.Namespace != nil && string(*parent.ParentRef.Namespace) != gwNamespace {
+		ns := route.Namespace
+		if parent.ParentRef.Namespace != nil {
+			ns = string(*parent.ParentRef.Namespace)
+		}
+		if ns != gwNamespace {
 			continue
 		}
 
