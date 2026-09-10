@@ -209,9 +209,6 @@ func applyGatewayStatusToAC(
 				WithProvider(gwStatus.bindingStatus.Provider),
 		)
 	}
-	if gwStatus.gatewayAddress != "" && gwStatus.condition.Status == metav1.ConditionTrue {
-		status.WithAddress(acv1beta1.MCPServerAddress().WithURL(gwStatus.gatewayAddress))
-	}
 }
 
 func (r *MCPServerReconciler) reconcileGatewayCondition(
