@@ -143,6 +143,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 			configKeyGatewayName:      "my-gateway",
 			configKeyGatewayNamespace: "gateway-ns",
 			configKeyHostname:         "myserver.mcp.local",
+			configKeyPrefix:           "myserver_",
 		}
 	}
 
@@ -219,7 +220,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(reg.Spec.TargetRef.Name).To(Equal(bindingName))
 		Expect(reg.Spec.Path).To(Equal("/mcp"))
 		Expect(reg.Spec.State).To(Equal("Enabled"))
-		Expect(reg.Spec.Prefix).To(BeEmpty())
+		Expect(reg.Spec.Prefix).To(Equal("myserver_"))
 
 		regOwner := metav1.GetControllerOf(reg)
 		Expect(regOwner).NotTo(BeNil())
@@ -311,19 +312,22 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(binding.Status.URL).To(Equal("http://myserver.mcp.local/mcp"))
 	})
 
-	It("should set optional prefix on MCPServerRegistration when present", func() {
+	It("should set Registered=False when prefix is missing", func() {
 		createMCPServer()
 		data := validConfigData()
-		data[configKeyPrefix] = "myserver_"
+		delete(data, configKeyPrefix)
 		createConfigMap(data)
 		createBinding()
 
 		_, err := doReconcile()
 		Expect(err).NotTo(HaveOccurred())
 
-		reg := &kuadrantapi.MCPServerRegistration{}
-		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
-		Expect(reg.Spec.Prefix).To(Equal("myserver_"))
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Message).To(ContainSubstring(configKeyPrefix))
 	})
 
 	It("should default sectionName to mcps", func() {
