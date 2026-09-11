@@ -71,7 +71,8 @@ const (
 
 	defaultSectionName = "mcps"
 
-	reasonRouteNotAccepted = "RouteNotAccepted"
+	reasonRouteNotAccepted     = "RouteNotAccepted"
+	reasonRegistrationNotReady = "RegistrationNotReady"
 )
 
 // Reconciler reconciles MCPGatewayBinding resources with provider "kuadrant".
@@ -175,6 +176,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
 
+	reg := &kuadrantapi.MCPServerRegistration{}
+	reg.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPServerRegistration"))
+	if err := r.Get(ctx, client.ObjectKey{Name: binding.Name, Namespace: binding.Namespace}, reg); err != nil {
+		return ctrl.Result{}, err
+	}
+	if !isRegistrationReady(reg) {
+		msg := "Waiting for MCPServerRegistration to become ready"
+		if readyCond := meta.FindStatusCondition(reg.Status.Conditions, "Ready"); readyCond != nil {
+			msg = readyCond.Message
+		}
+		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
+			reasonRegistrationNotReady, msg, "")
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
+	}
+
 	scheme, schemeErr := providers.SchemeFromAcceptedRoute(ctx, r.Client, route, gwName, gwNamespace)
 	if schemeErr != nil {
 		return ctrl.Result{}, schemeErr
@@ -182,7 +198,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	url := fmt.Sprintf("%s://%s%s", scheme, hostname, path)
 
 	return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionTrue,
-		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted and MCPServerRegistration created", url)
+		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted and MCPServerRegistration ready", url)
 }
 
 func (r *Reconciler) reconcileHTTPRoute(
@@ -466,6 +482,11 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		).
 		Named("mcpgatewaybinding-kuadrant").
 		Complete(r)
+}
+
+func isRegistrationReady(reg *kuadrantapi.MCPServerRegistration) bool {
+	cond := meta.FindStatusCondition(reg.Status.Conditions, "Ready")
+	return cond != nil && cond.Status == metav1.ConditionTrue
 }
 
 func isHTTPRouteAccepted(route *gatewayv1.HTTPRoute, gwName, gwNamespace string) bool {
