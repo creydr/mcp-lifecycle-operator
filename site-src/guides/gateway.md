@@ -219,7 +219,7 @@ data:
 | `gateway-name`      | Yes      |         | Name of the existing Gateway resource                        |
 | `gateway-namespace` | Yes      |         | Namespace where the Gateway resource lives                   |
 | `hostname`          | Yes      |         | Hostname matching the Gateway's MCP listener wildcard        |
-| `prefix`            | No       |         | Tool/prompt name prefix for federation (e.g., `myserver_`)   |
+| `prefix`            | Yes      |         | Tool/prompt name prefix for federation (e.g., `myserver_`)   |
 | `section-name`      | No       | `mcps`  | Gateway listener section name for the parent reference       |
 
 ### What It Creates
@@ -243,7 +243,7 @@ Both resources are owned by the MCPGatewayBinding, so they are automatically del
 ### MCPServer Configuration
 
 ```yaml
-apiVersion: mcp.x-k8s.io/v1alpha1
+apiVersion: mcp.x-k8s.io/v1beta1
 kind: MCPServer
 metadata:
   name: my-mcp-server

@@ -160,7 +160,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	prefix := configMap.Data[configKeyPrefix]
+	prefix, ok := configMap.Data[configKeyPrefix]
+	if !ok || prefix == "" {
+		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
+			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyPrefix))
+	}
 	if err := r.reconcileMCPServerRegistration(ctx, binding, path, prefix); err != nil {
 		return ctrl.Result{}, err
 	}
