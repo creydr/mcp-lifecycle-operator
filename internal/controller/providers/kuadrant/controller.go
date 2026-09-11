@@ -346,28 +346,35 @@ func (r *Reconciler) setNotRegistered(
 	binding *mcpv1alpha1.MCPGatewayBinding,
 	message string,
 ) error {
-	r.deleteStaleResources(ctx, binding)
+	if err := r.deleteStaleResources(ctx, binding); err != nil {
+		return err
+	}
 	return r.updateBindingStatus(ctx, binding, metav1.ConditionFalse, mcpcontroller.ReasonGatewayNotRegistered, message, "")
 }
 
-func (r *Reconciler) deleteStaleResources(ctx context.Context, binding *mcpv1alpha1.MCPGatewayBinding) {
-	logger := log.FromContext(ctx)
+func (r *Reconciler) deleteStaleResources(ctx context.Context, binding *mcpv1alpha1.MCPGatewayBinding) error {
 	key := client.ObjectKey{Name: binding.Name, Namespace: binding.Namespace}
 
 	route := &gatewayv1.HTTPRoute{}
-	if err := r.Get(ctx, key, route); err == nil {
-		if err := r.Delete(ctx, route); err != nil {
-			logger.Error(err, "Failed to delete stale HTTPRoute", "name", binding.Name)
+	if err := r.Get(ctx, key, route); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("checking for stale HTTPRoute: %w", err)
 		}
+	} else if err := r.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting stale HTTPRoute: %w", err)
 	}
 
 	reg := &kuadrantapi.MCPServerRegistration{}
 	reg.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPServerRegistration"))
-	if err := r.Get(ctx, key, reg); err == nil {
-		if err := r.Delete(ctx, reg); err != nil {
-			logger.Error(err, "Failed to delete stale MCPServerRegistration", "name", binding.Name)
+	if err := r.Get(ctx, key, reg); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("checking for stale MCPServerRegistration: %w", err)
 		}
+	} else if err := r.Delete(ctx, reg); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting stale MCPServerRegistration: %w", err)
 	}
+
+	return nil
 }
 
 func (r *Reconciler) updateBindingStatus(

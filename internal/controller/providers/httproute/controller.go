@@ -251,18 +251,24 @@ func (r *Reconciler) setNotRegistered(
 	binding *mcpv1alpha1.MCPGatewayBinding,
 	message string,
 ) error {
-	r.deleteStaleHTTPRoute(ctx, binding)
+	if err := r.deleteStaleHTTPRoute(ctx, binding); err != nil {
+		return err
+	}
 	return r.updateBindingStatus(ctx, binding, metav1.ConditionFalse, mcpcontroller.ReasonGatewayNotRegistered, message, "")
 }
 
-func (r *Reconciler) deleteStaleHTTPRoute(ctx context.Context, binding *mcpv1alpha1.MCPGatewayBinding) {
+func (r *Reconciler) deleteStaleHTTPRoute(ctx context.Context, binding *mcpv1alpha1.MCPGatewayBinding) error {
 	route := &gatewayv1.HTTPRoute{}
 	if err := r.Get(ctx, client.ObjectKey{Name: binding.Name, Namespace: binding.Namespace}, route); err != nil {
-		return
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("checking for stale HTTPRoute: %w", err)
 	}
-	if err := r.Delete(ctx, route); err != nil {
-		log.FromContext(ctx).Error(err, "Failed to delete stale HTTPRoute", "name", binding.Name)
+	if err := r.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting stale HTTPRoute: %w", err)
 	}
+	return nil
 }
 
 func (r *Reconciler) updateBindingStatus(
