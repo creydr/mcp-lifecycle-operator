@@ -48,7 +48,7 @@ func TestGatewayBindingCreation(t *testing.T) {
 		WithLabel(speed.Label, speed.Moderate).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureGateway(ctx, t, cfg, gwName, gwNamespace, "eg")
+			_ = f.EnsureGateway(ctx, t, cfg, gwName, gwNamespace, "eg")
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, map[string]string{
 				"gateway-name":      gwName,
 				"gateway-namespace": gwNamespace,
@@ -170,7 +170,7 @@ func TestGatewayRemoval(t *testing.T) {
 		WithLabel(speed.Label, speed.Moderate).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureGateway(ctx, t, cfg, gwName, gwNamespace, "eg")
+			_ = f.EnsureGateway(ctx, t, cfg, gwName, gwNamespace, "eg")
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, map[string]string{
 				"gateway-name":      gwName,
 				"gateway-namespace": gwNamespace,

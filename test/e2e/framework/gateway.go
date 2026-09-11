@@ -70,7 +70,6 @@ var providers = map[string]ProviderConfig{
 			"gateway-namespace": "gateway-system",
 			"gateway-class":     "istio",
 			"hostname":          "mcp.127-0-0-1.sslip.io",
-			"section-name":      "mcp",
 		},
 		GatewayService: GatewayServiceLocator{
 			Namespace: "gateway-system",

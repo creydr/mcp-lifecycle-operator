@@ -49,7 +49,7 @@ func TestGatewayConformanceBindingLifecycle(t *testing.T) {
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			prov.ConfigData["section-name"] = f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
 			return f.SetupMCPServer(ctx, t, cfg, "conformance-lifecycle", false,
 				f.WithGateway(prov.Name, configMapName),
@@ -121,7 +121,7 @@ func TestGatewayConformanceRemoval(t *testing.T) {
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			prov.ConfigData["section-name"] = f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "conformance-removal", false,
 				f.WithGateway(prov.Name, configMapName),
@@ -192,7 +192,7 @@ func TestGatewayConformanceHTTPReachability(t *testing.T) {
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			prov.ConfigData["section-name"] = f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "conformance-http", true,
 				f.WithGateway(prov.Name, configMapName),
