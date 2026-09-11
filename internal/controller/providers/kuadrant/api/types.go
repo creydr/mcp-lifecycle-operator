@@ -46,7 +46,12 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 type MCPServerRegistration struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              MCPServerRegistrationSpec `json:"spec"`
+	Spec              MCPServerRegistrationSpec   `json:"spec"`
+	Status            MCPServerRegistrationStatus `json:"status,omitempty"`
+}
+
+type MCPServerRegistrationStatus struct {
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 type MCPServerRegistrationSpec struct {
@@ -83,6 +88,12 @@ func (in *MCPServerRegistration) DeepCopyInto(out *MCPServerRegistration) {
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	out.Spec = in.Spec
+	if in.Status.Conditions != nil {
+		out.Status.Conditions = make([]metav1.Condition, len(in.Status.Conditions))
+		for i := range in.Status.Conditions {
+			in.Status.Conditions[i].DeepCopyInto(&out.Status.Conditions[i])
+		}
+	}
 }
 
 func (in *MCPServerRegistrationList) DeepCopyObject() runtime.Object {

@@ -62,6 +62,20 @@ func newTestMCPServer(name string) *mcpv1beta1.MCPServer {
 	}
 }
 
+func setRegistrationReady(ctx context.Context, name, namespace string) {
+	reg := &kuadrantapi.MCPServerRegistration{}
+	Expect(k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, reg)).To(Succeed())
+	reg.Status.Conditions = []metav1.Condition{
+		{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			Reason:             "Ready",
+			LastTransitionTime: metav1.Now(),
+		},
+	}
+	Expect(k8sClient.Status().Update(ctx, reg)).To(Succeed())
+}
+
 func setHTTPRouteAccepted(ctx context.Context, route *gatewayv1.HTTPRoute) {
 	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(route), route)).To(Succeed())
 	route.Status = gatewayv1.HTTPRouteStatus{
@@ -220,8 +234,72 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(registered.Reason).To(Equal(reasonRouteNotAccepted))
 		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
-		By("setting Registered=True once the gateway accepts the route")
+		By("setting Registered=False (RegistrationNotReady) once the route is accepted but registration is not ready")
 		setHTTPRouteAccepted(ctx, route)
+
+		result, err = doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered = meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Reason).To(Equal(reasonRegistrationNotReady))
+		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+		By("setting Registered=True once the MCPServerRegistration is ready")
+		setRegistrationReady(ctx, bindingName, testNamespace)
+
+		_, err = doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered = meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
+		Expect(binding.Status.URL).To(Equal("http://myserver.mcp.local/mcp"))
+	})
+
+	It("should not set Registered=True when MCPServerRegistration is not ready", func() {
+		createMCPServer()
+		createConfigMap(validConfigData())
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		setHTTPRouteAccepted(ctx, route)
+
+		By("setting a NotReady condition on the MCPServerRegistration")
+		reg := &kuadrantapi.MCPServerRegistration{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
+		reg.Status.Conditions = []metav1.Condition{
+			{
+				Type:               "Ready",
+				Status:             metav1.ConditionFalse,
+				Reason:             "NotReady",
+				Message:            "no valid mcpgatewayextensions configured",
+				LastTransitionTime: metav1.Now(),
+			},
+		}
+		Expect(k8sClient.Status().Update(ctx, reg)).To(Succeed())
+
+		result, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Reason).To(Equal(reasonRegistrationNotReady))
+		Expect(registered.Message).To(Equal("no valid mcpgatewayextensions configured"))
+		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+		By("transitioning to Registered=True once the MCPServerRegistration becomes ready")
+		setRegistrationReady(ctx, bindingName, testNamespace)
 
 		_, err = doReconcile()
 		Expect(err).NotTo(HaveOccurred())
@@ -744,6 +822,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		route := &gatewayv1.HTTPRoute{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
 		setHTTPRouteAccepted(ctx, route)
+		setRegistrationReady(ctx, bindingName, testNamespace)
 
 		_, err = doReconcile()
 		Expect(err).NotTo(HaveOccurred())
