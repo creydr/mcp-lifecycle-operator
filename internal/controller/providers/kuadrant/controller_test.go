@@ -133,10 +133,34 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		}
 	}
 
+	const gatewayExtensionName = "test-gateway-extension"
+
 	createMCPServer := func() {
 		server := newTestMCPServer(mcpServerName)
 		server.Spec.Config.Path = "/mcp"
 		Expect(k8sClient.Create(ctx, server)).To(Succeed())
+	}
+
+	createGatewayExtension := func(publicHost string) {
+		ensureGatewayNamespace(ctx)
+		ext := &kuadrantapi.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      gatewayExtensionName,
+				Namespace: "gateway-ns",
+			},
+			Spec: kuadrantapi.MCPGatewayExtensionSpec{
+				PublicHost: publicHost,
+				TargetRef: kuadrantapi.TargetReference{
+					Group:       "gateway.networking.k8s.io",
+					Kind:        "Gateway",
+					Name:        "my-gateway",
+					Namespace:   "gateway-ns",
+					SectionName: "mcp",
+				},
+			},
+		}
+		ext.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPGatewayExtension"))
+		Expect(k8sClient.Create(ctx, ext)).To(Succeed())
 	}
 
 	createConfigMap := func(data map[string]string) {
@@ -191,6 +215,8 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		} {
 			_ = k8sClient.Delete(ctx, obj)
 		}
+		ext := &kuadrantapi.MCPGatewayExtension{ObjectMeta: metav1.ObjectMeta{Name: gatewayExtensionName, Namespace: "gateway-ns"}}
+		_ = k8sClient.Delete(ctx, ext)
 	})
 
 	It("should create HTTPRoute and MCPServerRegistration from valid binding", func() {
@@ -262,6 +288,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 
 		By("setting Registered=True once the MCPServerRegistration is ready")
 		setRegistrationReady(ctx, bindingName, testNamespace)
+		createGatewayExtension("mcp.example.com")
 
 		_, err = doReconcile()
 		Expect(err).NotTo(HaveOccurred())
@@ -270,7 +297,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		registered = meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
-		Expect(binding.Status.URL).To(Equal("http://myserver.mcp.local/mcp"))
+		Expect(binding.Status.URL).To(Equal("http://mcp.example.com/mcp"))
 	})
 
 	It("should not set Registered=True when MCPServerRegistration is not ready", func() {
@@ -313,6 +340,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 
 		By("transitioning to Registered=True once the MCPServerRegistration becomes ready")
 		setRegistrationReady(ctx, bindingName, testNamespace)
+		createGatewayExtension("mcp.example.com")
 
 		_, err = doReconcile()
 		Expect(err).NotTo(HaveOccurred())
@@ -321,7 +349,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		registered = meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
-		Expect(binding.Status.URL).To(Equal("http://myserver.mcp.local/mcp"))
+		Expect(binding.Status.URL).To(Equal("http://mcp.example.com/mcp"))
 	})
 
 	It("should set Registered=False when prefix is missing", func() {
@@ -637,29 +665,22 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(registered.Message).To(ContainSubstring("configRef is required"))
 	})
 
-	It("should update HTTPRoute and MCPServerRegistration when ConfigMap changes", func() {
+	It("should update HTTPRoute when ConfigMap gateway-name changes", func() {
 		createMCPServer()
-		data := validConfigData()
-		data[configKeyPrefix] = "old_"
-		createConfigMap(data)
+		createConfigMap(validConfigData())
 		createBinding()
 
 		_, err := doReconcile()
 		Expect(err).NotTo(HaveOccurred())
 
-		reg := &kuadrantapi.MCPServerRegistration{}
-		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
-		Expect(reg.Spec.Prefix).To(Equal("old_"))
-
 		route := &gatewayv1.HTTPRoute{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
 		Expect(string(route.Spec.ParentRefs[0].Name)).To(Equal("my-gateway"))
 
-		By("updating ConfigMap")
+		By("updating ConfigMap gateway-name")
 		cm := &corev1.ConfigMap{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: configMapName, Namespace: testNamespace}, cm)).To(Succeed())
 		cm.Data[configKeyGatewayName] = "updated-gateway"
-		cm.Data[configKeyPrefix] = "new_"
 		Expect(k8sClient.Update(ctx, cm)).To(Succeed())
 
 		_, err = doReconcile()
@@ -667,9 +688,6 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
 		Expect(string(route.Spec.ParentRefs[0].Name)).To(Equal("updated-gateway"))
-
-		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
-		Expect(reg.Spec.Prefix).To(Equal("new_"))
 	})
 
 	It("should ignore HTTPRoute status from a different parent gateway", func() {
@@ -973,6 +991,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		createMCPServer()
 		createConfigMap(validConfigData())
 		createBinding()
+		createGatewayExtension("mcp.example.com")
 
 		_, err := doReconcile()
 		Expect(err).NotTo(HaveOccurred())

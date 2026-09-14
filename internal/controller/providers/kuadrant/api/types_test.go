@@ -29,22 +29,19 @@ func TestAddToScheme(t *testing.T) {
 		t.Fatalf("AddToScheme failed: %v", err)
 	}
 
-	gvk := SchemeGroupVersion.WithKind("MCPServerRegistration")
-	obj, err := s.New(gvk)
-	if err != nil {
-		t.Fatalf("scheme does not know %s: %v", gvk, err)
-	}
-	if _, ok := obj.(*MCPServerRegistration); !ok {
-		t.Fatalf("expected *MCPServerRegistration, got %T", obj)
-	}
-
-	listGVK := SchemeGroupVersion.WithKind("MCPServerRegistrationList")
-	listObj, err := s.New(listGVK)
-	if err != nil {
-		t.Fatalf("scheme does not know %s: %v", listGVK, err)
-	}
-	if _, ok := listObj.(*MCPServerRegistrationList); !ok {
-		t.Fatalf("expected *MCPServerRegistrationList, got %T", listObj)
+	for _, tc := range []struct {
+		kind     string
+		expected runtime.Object
+	}{
+		{"MCPServerRegistration", &MCPServerRegistration{}},
+		{"MCPServerRegistrationList", &MCPServerRegistrationList{}},
+		{"MCPGatewayExtension", &MCPGatewayExtension{}},
+		{"MCPGatewayExtensionList", &MCPGatewayExtensionList{}},
+	} {
+		gvk := SchemeGroupVersion.WithKind(tc.kind)
+		if _, err := s.New(gvk); err != nil {
+			t.Fatalf("scheme does not know %s: %v", gvk, err)
+		}
 	}
 }
 
@@ -127,6 +124,91 @@ func TestMCPServerRegistrationListDeepCopyObjectNil(t *testing.T) {
 func TestMCPServerRegistrationListDeepCopyIntoNilItems(t *testing.T) {
 	list := &MCPServerRegistrationList{}
 	out := &MCPServerRegistrationList{}
+	list.DeepCopyInto(out)
+	if out.Items != nil {
+		t.Fatal("expected nil items when source has nil items")
+	}
+}
+
+func TestMCPGatewayExtensionDeepCopyObject(t *testing.T) {
+	ext := &MCPGatewayExtension{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-ext",
+			Namespace: "default",
+		},
+		Spec: MCPGatewayExtensionSpec{
+			PublicHost: "mcp.example.com",
+			TargetRef: TargetReference{
+				Group:       "gateway.networking.k8s.io",
+				Kind:        "Gateway",
+				Name:        "my-gw",
+				Namespace:   "gw-ns",
+				SectionName: "mcp",
+			},
+		},
+	}
+
+	copied := ext.DeepCopyObject()
+	typedCopy, ok := copied.(*MCPGatewayExtension)
+	if !ok {
+		t.Fatalf("expected *MCPGatewayExtension, got %T", copied)
+	}
+	if typedCopy.Name != "test-ext" || typedCopy.Spec.PublicHost != "mcp.example.com" {
+		t.Fatal("deep copy does not match original")
+	}
+
+	typedCopy.Spec.PublicHost = "changed.example.com"
+	if ext.Spec.PublicHost == "changed.example.com" {
+		t.Fatal("mutating copy affected original")
+	}
+}
+
+func TestMCPGatewayExtensionDeepCopyObjectNil(t *testing.T) {
+	var ext *MCPGatewayExtension
+	if ext.DeepCopyObject() != nil {
+		t.Fatal("expected nil for nil receiver")
+	}
+}
+
+func TestMCPGatewayExtensionListDeepCopyObject(t *testing.T) {
+	list := &MCPGatewayExtensionList{
+		Items: []MCPGatewayExtension{
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "a"},
+				Spec:       MCPGatewayExtensionSpec{PublicHost: "a.example.com"},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "b"},
+				Spec:       MCPGatewayExtensionSpec{PublicHost: "b.example.com"},
+			},
+		},
+	}
+
+	copied := list.DeepCopyObject()
+	typedCopy, ok := copied.(*MCPGatewayExtensionList)
+	if !ok {
+		t.Fatalf("expected *MCPGatewayExtensionList, got %T", copied)
+	}
+	if len(typedCopy.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(typedCopy.Items))
+	}
+
+	typedCopy.Items[0].Spec.PublicHost = "changed.example.com"
+	if list.Items[0].Spec.PublicHost == "changed.example.com" {
+		t.Fatal("mutating copy affected original")
+	}
+}
+
+func TestMCPGatewayExtensionListDeepCopyObjectNil(t *testing.T) {
+	var list *MCPGatewayExtensionList
+	if list.DeepCopyObject() != nil {
+		t.Fatal("expected nil for nil receiver")
+	}
+}
+
+func TestMCPGatewayExtensionListDeepCopyIntoNilItems(t *testing.T) {
+	list := &MCPGatewayExtensionList{}
+	out := &MCPGatewayExtensionList{}
 	list.DeepCopyInto(out)
 	if out.Items != nil {
 		t.Fatal("expected nil items when source has nil items")

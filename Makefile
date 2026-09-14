@@ -78,8 +78,15 @@ COVER_PROFILE ?= cover.out
 # Human-readable reports (not used by CI; see kubernetes-sigs/cluster-api `test-cover` pattern).
 COVER_OUTPUT_DIR ?= out
 
+KUADRANT_TEST_CRD_DIR := internal/controller/providers/kuadrant/testdata
+
+.PHONY: kuadrant-test-crds
+kuadrant-test-crds: kustomize ## Download Kuadrant CRDs for unit tests.
+	$(KUSTOMIZE) build 'https://github.com/Kuadrant/mcp-gateway/config/crd?ref=$(MCP_GATEWAY_VERSION)' \
+		-o $(KUADRANT_TEST_CRD_DIR)/
+
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
+test: manifests generate fmt vet setup-envtest kuadrant-test-crds ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
 		go test $$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...) -coverprofile $(COVER_PROFILE)
 

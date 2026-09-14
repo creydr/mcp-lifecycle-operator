@@ -92,6 +92,7 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups=mcp.kuadrant.io,resources=mcpserverregistrations,verbs=get;list;watch;create;update;delete
+// +kubebuilder:rbac:groups=mcp.kuadrant.io,resources=mcpgatewayextensions,verbs=get;list;watch
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -200,14 +201,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
 
+	publicHost, err := r.resolvePublicHostname(ctx, gwName, gwNamespace)
+	if err != nil {
+		return ctrl.Result{}, r.setNotRegistered(ctx, binding, err.Error())
+	}
+
 	scheme, schemeErr := providers.SchemeFromAcceptedRoute(ctx, r.Client, route, gwName, gwNamespace)
 	if schemeErr != nil {
 		return ctrl.Result{}, schemeErr
 	}
-	url := fmt.Sprintf("%s://%s%s", scheme, hostname, path)
+	statusURL := fmt.Sprintf("%s://%s%s", scheme, publicHost, path)
 
 	return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionTrue,
-		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted and MCPServerRegistration ready", url)
+		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted and MCPServerRegistration ready", statusURL)
 }
 
 func (r *Reconciler) reconcileHTTPRoute(
@@ -423,6 +429,36 @@ func (r *Reconciler) resolveHostname(ctx context.Context, mcpServerName, gwName,
 	return "", fmt.Errorf("gateway %s/%s has no listener named %q", gwNamespace, gwName, sectionName)
 }
 
+// resolvePublicHostname finds the MCPGatewayExtension targeting the given
+// Gateway and returns its publicHost. If zero or multiple extensions target the
+// Gateway, an error is returned asking the user to set hostname explicitly.
+func (r *Reconciler) resolvePublicHostname(ctx context.Context, gwName, gwNamespace string) (string, error) {
+	extList := &kuadrantapi.MCPGatewayExtensionList{}
+	if err := r.List(ctx, extList); err != nil {
+		return "", fmt.Errorf("listing MCPGatewayExtensions: %w", err)
+	}
+
+	var matches []kuadrantapi.MCPGatewayExtension
+	for _, ext := range extList.Items {
+		ref := ext.Spec.TargetRef
+		if ref.Kind == "Gateway" && ref.Name == gwName && ref.Namespace == gwNamespace {
+			matches = append(matches, ext)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no MCPGatewayExtension targets gateway %s/%s; set %q in the ConfigMap to specify the public hostname", gwNamespace, gwName, configKeyHostname)
+	case 1:
+		if matches[0].Spec.PublicHost == "" {
+			return "", fmt.Errorf("MCPGatewayExtension %s/%s has no publicHost; set %q in the ConfigMap", matches[0].Namespace, matches[0].Name, configKeyHostname)
+		}
+		return matches[0].Spec.PublicHost, nil
+	default:
+		return "", fmt.Errorf("multiple MCPGatewayExtensions target gateway %s/%s; set %q in the ConfigMap to specify the public hostname", gwNamespace, gwName, configKeyHostname)
+	}
+}
+
 func (r *Reconciler) updateBindingStatus(
 	ctx context.Context,
 	binding *mcpv1alpha1.MCPGatewayBinding,
@@ -505,6 +541,11 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.findBindingsForGateway),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
+		Watches(
+			&kuadrantapi.MCPGatewayExtension{},
+			handler.EnqueueRequestsFromMapFunc(r.findBindingsForGatewayExtension),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
 		Named("mcpgatewaybinding-kuadrant").
 		Complete(r)
 }
@@ -567,6 +608,10 @@ func (r *Reconciler) findBindingsForConfigMap(ctx context.Context, obj client.Ob
 }
 
 func (r *Reconciler) findBindingsForGateway(ctx context.Context, obj client.Object) []ctrl.Request {
+	return r.findBindingsForGatewayByNamespace(ctx, obj.GetName(), obj.GetNamespace())
+}
+
+func (r *Reconciler) findBindingsForGatewayByNamespace(ctx context.Context, gwName, gwNamespace string) []ctrl.Request {
 	bindingList := &mcpv1alpha1.MCPGatewayBindingList{}
 	if err := r.List(ctx, bindingList); err != nil {
 		return nil
@@ -581,14 +626,26 @@ func (r *Reconciler) findBindingsForGateway(ctx context.Context, obj client.Obje
 		if err := r.Get(ctx, client.ObjectKey{Name: b.Spec.ConfigRef, Namespace: b.Namespace}, cm); err != nil {
 			continue
 		}
-		if cm.Data[configKeyGatewayName] == obj.GetName() &&
-			cm.Data[configKeyGatewayNamespace] == obj.GetNamespace() {
+		if cm.Data[configKeyGatewayName] == gwName &&
+			cm.Data[configKeyGatewayNamespace] == gwNamespace {
 			requests = append(requests, ctrl.Request{
 				NamespacedName: client.ObjectKeyFromObject(b),
 			})
 		}
 	}
 	return requests
+}
+
+func (r *Reconciler) findBindingsForGatewayExtension(ctx context.Context, obj client.Object) []ctrl.Request {
+	ext, ok := obj.(*kuadrantapi.MCPGatewayExtension)
+	if !ok {
+		return nil
+	}
+	ref := ext.Spec.TargetRef
+	if ref.Kind != "Gateway" || ref.Name == "" || ref.Namespace == "" {
+		return nil
+	}
+	return r.findBindingsForGatewayByNamespace(ctx, ref.Name, ref.Namespace)
 }
 
 func (r *Reconciler) findBindingsForMCPServer(ctx context.Context, obj client.Object) []ctrl.Request {

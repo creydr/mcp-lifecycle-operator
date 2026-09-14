@@ -65,6 +65,14 @@ rules:
 - apiGroups:
   - mcp.kuadrant.io
   resources:
+  - mcpgatewayextensions
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - mcp.kuadrant.io
+  resources:
   - mcpserverregistrations
   verbs:
   - create

@@ -38,6 +38,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
 		&MCPServerRegistration{},
 		&MCPServerRegistrationList{},
+		&MCPGatewayExtension{},
+		&MCPGatewayExtensionList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil
@@ -62,10 +64,11 @@ type MCPServerRegistrationSpec struct {
 }
 
 type TargetReference struct {
-	Group     string `json:"group,omitempty"`
-	Kind      string `json:"kind,omitempty"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace,omitempty"`
+	Group       string `json:"group,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace,omitempty"`
+	SectionName string `json:"sectionName,omitempty"`
 }
 
 type MCPServerRegistrationList struct {
@@ -111,6 +114,60 @@ func (in *MCPServerRegistrationList) DeepCopyInto(out *MCPServerRegistrationList
 	in.ListMeta.DeepCopyInto(&out.ListMeta)
 	if in.Items != nil {
 		out.Items = make([]MCPServerRegistration, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+type MCPGatewayExtension struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              MCPGatewayExtensionSpec `json:"spec"`
+}
+
+type MCPGatewayExtensionSpec struct {
+	PublicHost string          `json:"publicHost,omitempty"`
+	TargetRef  TargetReference `json:"targetRef"`
+}
+
+type MCPGatewayExtensionList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []MCPGatewayExtension `json:"items"`
+}
+
+func (in *MCPGatewayExtension) DeepCopyObject() runtime.Object {
+	if in == nil {
+		return nil
+	}
+	out := new(MCPGatewayExtension)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *MCPGatewayExtension) DeepCopyInto(out *MCPGatewayExtension) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	out.Spec = in.Spec
+}
+
+func (in *MCPGatewayExtensionList) DeepCopyObject() runtime.Object {
+	if in == nil {
+		return nil
+	}
+	out := new(MCPGatewayExtensionList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *MCPGatewayExtensionList) DeepCopyInto(out *MCPGatewayExtensionList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]MCPGatewayExtension, len(in.Items))
 		for i := range in.Items {
 			in.Items[i].DeepCopyInto(&out.Items[i])
 		}
