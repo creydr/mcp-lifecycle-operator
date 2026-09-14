@@ -209,7 +209,6 @@ metadata:
 data:
   gateway-name: mcp-gateway
   gateway-namespace: mcp-system
-  hostname: myserver.mcp.local
   prefix: myserver_
   section-name: mcps
 ```
@@ -218,7 +217,7 @@ data:
 |---------------------|----------|---------|--------------------------------------------------------------|
 | `gateway-name`      | Yes      |         | Name of the existing Gateway resource                        |
 | `gateway-namespace` | Yes      |         | Namespace where the Gateway resource lives                   |
-| `hostname`          | Yes      |         | Hostname matching the Gateway's MCP listener wildcard        |
+| `hostname`          | No       | auto    | Hostname for the HTTPRoute. When omitted, auto-constructed from the Gateway listener's wildcard hostname (e.g., `*.mcp.local` + MCPServer name = `my-server.mcp.local`). Set explicitly to override. |
 | `prefix`            | Yes      |         | Tool/prompt name prefix for federation (e.g., `myserver_`)   |
 | `section-name`      | No       | `mcps`  | Gateway listener section name for the parent reference       |
 
