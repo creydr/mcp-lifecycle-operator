@@ -151,6 +151,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		sectionName = sn
 	}
 
+	prefix, ok := configMap.Data[configKeyPrefix]
+	if !ok || prefix == "" {
+		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
+			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyPrefix))
+	}
+
 	path := mcpServer.Spec.Config.Path
 	if path == "" {
 		path = mcpcontroller.DefaultMCPPath
@@ -160,11 +166,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	prefix, ok := configMap.Data[configKeyPrefix]
-	if !ok || prefix == "" {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyPrefix))
-	}
 	if err := r.reconcileMCPServerRegistration(ctx, binding, path, prefix); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -273,8 +274,6 @@ func (r *Reconciler) reconcileHTTPRoute(
 	if apierrors.IsNotFound(err) {
 		logger.Info("Creating HTTPRoute", "name", httpRoute.Name)
 		if createErr := r.Create(ctx, httpRoute); createErr != nil {
-			_ = r.setNotRegistered(ctx, binding,
-				fmt.Sprintf("Failed to create HTTPRoute: %v", createErr))
 			return createErr
 		}
 		return nil
@@ -292,8 +291,6 @@ func (r *Reconciler) reconcileHTTPRoute(
 		logger.Info("Updating HTTPRoute", "name", httpRoute.Name)
 		existing.Spec = httpRoute.Spec
 		if updateErr := r.Update(ctx, existing); updateErr != nil {
-			_ = r.setNotRegistered(ctx, binding,
-				fmt.Sprintf("Failed to update HTTPRoute: %v", updateErr))
 			return updateErr
 		}
 	}
@@ -334,8 +331,6 @@ func (r *Reconciler) reconcileMCPServerRegistration(
 	if apierrors.IsNotFound(err) {
 		logger.Info("Creating MCPServerRegistration", "name", reg.Name)
 		if createErr := r.Create(ctx, reg); createErr != nil {
-			_ = r.setNotRegistered(ctx, binding,
-				fmt.Sprintf("Failed to create MCPServerRegistration: %v", createErr))
 			return createErr
 		}
 		return nil
@@ -353,8 +348,6 @@ func (r *Reconciler) reconcileMCPServerRegistration(
 		logger.Info("Updating MCPServerRegistration", "name", reg.Name)
 		existing.Spec = reg.Spec
 		if updateErr := r.Update(ctx, existing); updateErr != nil {
-			_ = r.setNotRegistered(ctx, binding,
-				fmt.Sprintf("Failed to update MCPServerRegistration: %v", updateErr))
 			return updateErr
 		}
 	}
@@ -416,12 +409,7 @@ func (r *Reconciler) updateBindingStatus(
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: binding.Generation,
-		LastTransitionTime: metav1.Now(),
 	}
-	if existing := meta.FindStatusCondition(binding.Status.Conditions, condition.Type); existing != nil && existing.Status == condition.Status {
-		condition.LastTransitionTime = existing.LastTransitionTime
-	}
-
 	meta.SetStatusCondition(&binding.Status.Conditions, condition)
 	binding.Status.URL = url
 
@@ -509,7 +497,7 @@ func isHTTPRouteAccepted(route *gatewayv1.HTTPRoute, gwName, gwNamespace string)
 		accepted := false
 		resolvedRefs := false
 		for _, cond := range parent.Conditions {
-			if cond.ObservedGeneration > 0 && cond.ObservedGeneration < route.Generation {
+			if cond.ObservedGeneration < route.Generation {
 				continue
 			}
 			if cond.Type == string(gatewayv1.RouteConditionAccepted) &&

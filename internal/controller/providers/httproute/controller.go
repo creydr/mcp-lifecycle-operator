@@ -199,8 +199,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if apierrors.IsNotFound(err) {
 		logger.Info("Creating HTTPRoute", "name", httpRoute.Name)
 		if createErr := r.Create(ctx, httpRoute); createErr != nil {
-			_ = r.setNotRegistered(ctx, binding,
-				fmt.Sprintf("Failed to create HTTPRoute: %v", createErr))
 			return ctrl.Result{}, createErr
 		}
 	} else if err != nil {
@@ -215,8 +213,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			logger.Info("Updating HTTPRoute", "name", httpRoute.Name)
 			existing.Spec = httpRoute.Spec
 			if updateErr := r.Update(ctx, existing); updateErr != nil {
-				_ = r.setNotRegistered(ctx, binding,
-					fmt.Sprintf("Failed to update HTTPRoute: %v", updateErr))
 				return ctrl.Result{}, updateErr
 			}
 		}
@@ -290,12 +286,7 @@ func (r *Reconciler) updateBindingStatus(
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: binding.Generation,
-		LastTransitionTime: metav1.Now(),
 	}
-	if existing := meta.FindStatusCondition(binding.Status.Conditions, condition.Type); existing != nil && existing.Status == condition.Status {
-		condition.LastTransitionTime = existing.LastTransitionTime
-	}
-
 	meta.SetStatusCondition(&binding.Status.Conditions, condition)
 	binding.Status.URL = url
 
@@ -361,7 +352,7 @@ func isHTTPRouteAccepted(route *gatewayv1.HTTPRoute, gwName, gwNamespace string)
 		accepted := false
 		resolvedRefs := false
 		for _, cond := range parent.Conditions {
-			if cond.ObservedGeneration > 0 && cond.ObservedGeneration < route.Generation {
+			if cond.ObservedGeneration < route.Generation {
 				continue
 			}
 			if cond.Type == string(gatewayv1.RouteConditionAccepted) &&
