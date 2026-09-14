@@ -72,7 +72,7 @@ func newTestMCPServer(name string) *mcpv1beta1.MCPServer {
 	}
 }
 
-func setRegistrationReady(ctx context.Context, name, namespace string) {
+func setRegistrationReady(ctx context.Context, name, namespace string) { //nolint:unparam
 	reg := &kuadrantapi.MCPServerRegistration{}
 	Expect(k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, reg)).To(Succeed())
 	reg.Status.Conditions = []metav1.Condition{

@@ -94,6 +94,74 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=mcp.kuadrant.io,resources=mcpserverregistrations,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=mcp.kuadrant.io,resources=mcpgatewayextensions,verbs=get;list;watch
 
+type parsedConfig struct {
+	gwName, gwNamespace, sectionName string
+	hostname                         string
+	hostnameExplicit                 bool
+	prefix, path                     string
+}
+
+func (r *Reconciler) parseConfig(ctx context.Context, binding *mcpv1alpha1.MCPGatewayBinding, mcpServer *mcpv1beta1.MCPServer) (*parsedConfig, error) {
+	configMap := &corev1.ConfigMap{}
+	if binding.Spec.ConfigRef == "" {
+		return nil, r.setNotRegistered(ctx, binding,
+			"spec.configRef is required for kuadrant provider")
+	}
+	if err := r.Get(ctx, client.ObjectKey{Name: binding.Spec.ConfigRef, Namespace: binding.Namespace}, configMap); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, err
+		}
+		return nil, r.setNotRegistered(ctx, binding,
+			fmt.Sprintf("ConfigMap %q not found", binding.Spec.ConfigRef))
+	}
+
+	gwName, ok := configMap.Data[configKeyGatewayName]
+	if !ok || gwName == "" {
+		return nil, r.setNotRegistered(ctx, binding,
+			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyGatewayName))
+	}
+	gwNamespace, ok := configMap.Data[configKeyGatewayNamespace]
+	if !ok || gwNamespace == "" {
+		return nil, r.setNotRegistered(ctx, binding,
+			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyGatewayNamespace))
+	}
+	sectionName := defaultSectionName
+	if sn, ok := configMap.Data[configKeySectionName]; ok && sn != "" {
+		sectionName = sn
+	}
+
+	hostname, hostnameExplicit := configMap.Data[configKeyHostname]
+	if !hostnameExplicit || hostname == "" {
+		hostnameExplicit = false
+		var resolveErr error
+		hostname, resolveErr = r.resolveHostname(ctx, mcpServer.Name, gwName, gwNamespace, sectionName)
+		if resolveErr != nil {
+			return nil, r.setNotRegistered(ctx, binding, resolveErr.Error())
+		}
+	}
+
+	prefix, ok := configMap.Data[configKeyPrefix]
+	if !ok || prefix == "" {
+		return nil, r.setNotRegistered(ctx, binding,
+			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyPrefix))
+	}
+
+	path := mcpServer.Spec.Config.Path
+	if path == "" {
+		path = mcpcontroller.DefaultMCPPath
+	}
+
+	return &parsedConfig{
+		gwName:           gwName,
+		gwNamespace:      gwNamespace,
+		sectionName:      sectionName,
+		hostname:         hostname,
+		hostnameExplicit: hostnameExplicit,
+		prefix:           prefix,
+		path:             path,
+	}, nil
+}
+
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -119,60 +187,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	configMap := &corev1.ConfigMap{}
-	if binding.Spec.ConfigRef == "" {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			"spec.configRef is required for kuadrant provider")
-	}
-	if err := r.Get(ctx, client.ObjectKey{Name: binding.Spec.ConfigRef, Namespace: binding.Namespace}, configMap); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			fmt.Sprintf("ConfigMap %q not found", binding.Spec.ConfigRef))
-	}
-
-	gwName, ok := configMap.Data[configKeyGatewayName]
-	if !ok || gwName == "" {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyGatewayName))
-	}
-	gwNamespace, ok := configMap.Data[configKeyGatewayNamespace]
-	if !ok || gwNamespace == "" {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyGatewayNamespace))
-	}
-	sectionName := defaultSectionName
-	if sn, ok := configMap.Data[configKeySectionName]; ok && sn != "" {
-		sectionName = sn
-	}
-
-	hostname, hostnameExplicit := configMap.Data[configKeyHostname]
-	if !hostnameExplicit || hostname == "" {
-		hostnameExplicit = false
-		var resolveErr error
-		hostname, resolveErr = r.resolveHostname(ctx, mcpServer.Name, gwName, gwNamespace, sectionName)
-		if resolveErr != nil {
-			return ctrl.Result{}, r.setNotRegistered(ctx, binding, resolveErr.Error())
-		}
-	}
-
-	prefix, ok := configMap.Data[configKeyPrefix]
-	if !ok || prefix == "" {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			fmt.Sprintf("ConfigMap %q missing required key %q", binding.Spec.ConfigRef, configKeyPrefix))
-	}
-
-	path := mcpServer.Spec.Config.Path
-	if path == "" {
-		path = mcpcontroller.DefaultMCPPath
-	}
-
-	if err := r.reconcileHTTPRoute(ctx, binding, mcpServer, gwName, gwNamespace, hostname, sectionName, path); err != nil {
+	cfg, err := r.parseConfig(ctx, binding, mcpServer)
+	if cfg == nil {
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcileMCPServerRegistration(ctx, binding, path, prefix); err != nil {
+	if err := r.reconcileHTTPRoute(ctx, binding, mcpServer, cfg.gwName, cfg.gwNamespace, cfg.hostname, cfg.sectionName, cfg.path); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileMCPServerRegistration(ctx, binding, cfg.path, cfg.prefix); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -181,7 +205,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	if !isHTTPRouteAccepted(route, gwName, gwNamespace) {
+	if !isHTTPRouteAccepted(route, cfg.gwName, cfg.gwNamespace) {
 		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
 			reasonRouteNotAccepted, "Waiting for gateway to accept HTTPRoute", "")
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
@@ -202,10 +226,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
 
-	publicHost := hostname
-	if !hostnameExplicit {
+	publicHost := cfg.hostname
+	if !cfg.hostnameExplicit {
 		var resolveErr error
-		publicHost, resolveErr = r.resolvePublicHostname(ctx, gwName, gwNamespace)
+		publicHost, resolveErr = r.resolvePublicHostname(ctx, cfg.gwName, cfg.gwNamespace)
 		if resolveErr != nil {
 			statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
 				mcpcontroller.ReasonGatewayNotRegistered, resolveErr.Error(), "")
@@ -213,11 +237,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	scheme, schemeErr := providers.SchemeFromAcceptedRoute(ctx, r.Client, route, gwName, gwNamespace)
+	scheme, schemeErr := providers.SchemeFromAcceptedRoute(ctx, r.Client, route, cfg.gwName, cfg.gwNamespace)
 	if schemeErr != nil {
 		return ctrl.Result{}, schemeErr
 	}
-	statusURL := fmt.Sprintf("%s://%s%s", scheme, publicHost, path)
+	statusURL := fmt.Sprintf("%s://%s%s", scheme, publicHost, cfg.path)
 
 	return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionTrue,
 		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted and MCPServerRegistration ready", statusURL)
