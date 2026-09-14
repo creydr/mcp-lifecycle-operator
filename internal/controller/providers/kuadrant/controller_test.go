@@ -288,7 +288,6 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 
 		By("setting Registered=True once the MCPServerRegistration is ready")
 		setRegistrationReady(ctx, bindingName, testNamespace)
-		createGatewayExtension("mcp.example.com")
 
 		_, err = doReconcile()
 		Expect(err).NotTo(HaveOccurred())
@@ -297,7 +296,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		registered = meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
-		Expect(binding.Status.URL).To(Equal("http://mcp.example.com/mcp"))
+		Expect(binding.Status.URL).To(Equal("http://myserver.mcp.local/mcp"))
 	})
 
 	It("should not set Registered=True when MCPServerRegistration is not ready", func() {
@@ -340,7 +339,6 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 
 		By("transitioning to Registered=True once the MCPServerRegistration becomes ready")
 		setRegistrationReady(ctx, bindingName, testNamespace)
-		createGatewayExtension("mcp.example.com")
 
 		_, err = doReconcile()
 		Expect(err).NotTo(HaveOccurred())
@@ -349,7 +347,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		registered = meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
-		Expect(binding.Status.URL).To(Equal("http://mcp.example.com/mcp"))
+		Expect(binding.Status.URL).To(Equal("http://myserver.mcp.local/mcp"))
 	})
 
 	It("should set Registered=False when prefix is missing", func() {
@@ -602,6 +600,74 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
 		Expect(registered.Message).To(ContainSubstring("no listener named"))
+	})
+
+	It("should resolve public hostname from MCPGatewayExtension when hostname is omitted", func() {
+		createMCPServer()
+
+		By("creating a Gateway with a wildcard listener")
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     gatewayv1.SectionName(defaultSectionName),
+						Port:     80,
+						Protocol: gatewayv1.HTTPProtocolType,
+						Hostname: hostnamePtr("*.mcp.local"),
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		createConfigMap(map[string]string{
+			configKeyGatewayName:      "my-gateway",
+			configKeyGatewayNamespace: "gateway-ns",
+			configKeyPrefix:           "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		setHTTPRouteAccepted(ctx, route)
+		setRegistrationReady(ctx, bindingName, testNamespace)
+
+		By("reconciling without MCPGatewayExtension should set Registered=False and preserve resources")
+		result, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Message).To(ContainSubstring("no MCPGatewayExtension"))
+
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed(),
+			"HTTPRoute should not be deleted when resolvePublicHostname fails")
+
+		By("creating MCPGatewayExtension should resolve public hostname")
+		createGatewayExtension("mcp.example.com")
+
+		_, err = doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered = meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
+		Expect(binding.Status.URL).To(Equal("http://mcp.example.com/mcp"))
 	})
 
 	It("should prefer explicit hostname from ConfigMap over auto-construction", func() {
@@ -991,7 +1057,6 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		createMCPServer()
 		createConfigMap(validConfigData())
 		createBinding()
-		createGatewayExtension("mcp.example.com")
 
 		_, err := doReconcile()
 		Expect(err).NotTo(HaveOccurred())

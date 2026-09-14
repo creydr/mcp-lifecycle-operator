@@ -147,8 +147,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		sectionName = sn
 	}
 
-	hostname, ok := configMap.Data[configKeyHostname]
-	if !ok || hostname == "" {
+	hostname, hostnameExplicit := configMap.Data[configKeyHostname]
+	if !hostnameExplicit || hostname == "" {
+		hostnameExplicit = false
 		var resolveErr error
 		hostname, resolveErr = r.resolveHostname(ctx, mcpServer.Name, gwName, gwNamespace, sectionName)
 		if resolveErr != nil {
@@ -201,9 +202,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
 
-	publicHost, err := r.resolvePublicHostname(ctx, gwName, gwNamespace)
-	if err != nil {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding, err.Error())
+	publicHost := hostname
+	if !hostnameExplicit {
+		var resolveErr error
+		publicHost, resolveErr = r.resolvePublicHostname(ctx, gwName, gwNamespace)
+		if resolveErr != nil {
+			statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
+				mcpcontroller.ReasonGatewayNotRegistered, resolveErr.Error(), "")
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
+		}
 	}
 
 	scheme, schemeErr := providers.SchemeFromAcceptedRoute(ctx, r.Client, route, gwName, gwNamespace)
@@ -441,7 +448,11 @@ func (r *Reconciler) resolvePublicHostname(ctx context.Context, gwName, gwNamesp
 	var matches []kuadrantapi.MCPGatewayExtension
 	for _, ext := range extList.Items {
 		ref := ext.Spec.TargetRef
-		if ref.Kind == "Gateway" && ref.Name == gwName && ref.Namespace == gwNamespace {
+		refNS := ref.Namespace
+		if refNS == "" {
+			refNS = ext.Namespace
+		}
+		if ref.Kind == "Gateway" && ref.Name == gwName && refNS == gwNamespace {
 			matches = append(matches, ext)
 		}
 	}
