@@ -249,7 +249,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if schemeErr != nil {
 		return ctrl.Result{}, schemeErr
 	}
-	statusURL := fmt.Sprintf("%s://%s%s", scheme, publicHost, path)
+	statusURL := fmt.Sprintf("%s://%s%s", scheme, providers.FormatHost(publicHost), path)
 
 	return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionTrue,
 		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted by gateway", statusURL)

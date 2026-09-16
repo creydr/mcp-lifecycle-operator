@@ -19,6 +19,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"net/netip"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -123,4 +124,13 @@ func protocolToScheme(protocol gatewayv1.ProtocolType) string {
 	default:
 		return SchemeHTTP
 	}
+}
+
+// FormatHost brackets IPv6 addresses for use in URL authorities.
+// Hostnames and IPv4 addresses are returned unchanged.
+func FormatHost(host string) string {
+	if addr, err := netip.ParseAddr(host); err == nil && addr.Is6() {
+		return "[" + host + "]"
+	}
+	return host
 }

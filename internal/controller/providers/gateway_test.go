@@ -404,6 +404,28 @@ func TestGatewayAddress(t *testing.T) {
 	}
 }
 
+func TestFormatHost(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		want string
+	}{
+		{name: "hostname unchanged", host: "gw.example.com", want: "gw.example.com"},
+		{name: "IPv4 unchanged", host: "10.0.0.1", want: "10.0.0.1"},
+		{name: "IPv6 bracketed", host: "2001:db8::1", want: "[2001:db8::1]"},
+		{name: "IPv6 full bracketed", host: "fd00:10:96::1", want: "[fd00:10:96::1]"},
+		{name: "empty unchanged", host: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatHost(tt.host)
+			if got != tt.want {
+				t.Errorf("FormatHost(%q) = %q, want %q", tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
 func sectionNamePtr(s string) *gatewayv1.SectionName {
 	sn := gatewayv1.SectionName(s)
 	return &sn

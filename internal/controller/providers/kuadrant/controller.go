@@ -233,7 +233,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	ep, resolveErr := r.resolvePublicEndpoint(ctx, cfg)
 	if resolveErr != nil {
-		return ctrl.Result{}, resolveErr
+		return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
+			mcpcontroller.ReasonGatewayNotRegistered, resolveErr.Error(), "")
 	}
 	if ep == nil {
 		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
@@ -242,7 +243,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
 
-	statusURL := fmt.Sprintf("%s://%s%s", ep.scheme, ep.host, cfg.path)
+	statusURL := fmt.Sprintf("%s://%s%s", ep.scheme, providers.FormatHost(ep.host), cfg.path)
 
 	return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionTrue,
 		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted and MCPServerRegistration ready", statusURL)

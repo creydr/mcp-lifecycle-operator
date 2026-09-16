@@ -893,8 +893,15 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		setRegistrationReady(ctx, bindingName, testNamespace)
 
 		_, err = doReconcile()
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("multiple MCPGatewayExtensions"))
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Reason).To(Equal(mcpcontroller.ReasonGatewayNotRegistered))
+		Expect(registered.Message).To(ContainSubstring("multiple MCPGatewayExtensions"))
 	})
 
 	It("should derive scheme from public listener protocol (HTTPS)", func() {
