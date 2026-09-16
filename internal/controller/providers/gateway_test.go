@@ -23,6 +23,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -313,10 +314,6 @@ func TestSchemeFromAcceptedRoute_TransientError(t *testing.T) {
 	}
 }
 
-func addressTypePtr(t gatewayv1.AddressType) *gatewayv1.AddressType {
-	return &t
-}
-
 func TestGatewayAddress(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := gatewayv1.Install(scheme); err != nil {
@@ -337,8 +334,8 @@ func TestGatewayAddress(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
 				Status: gatewayv1.GatewayStatus{
 					Addresses: []gatewayv1.GatewayStatusAddress{
-						{Type: addressTypePtr(gatewayv1.IPAddressType), Value: "10.0.0.1"},
-						{Type: addressTypePtr(gatewayv1.HostnameAddressType), Value: "gw.example.com"},
+						{Type: ptr.To(gatewayv1.IPAddressType), Value: "10.0.0.1"},
+						{Type: ptr.To(gatewayv1.HostnameAddressType), Value: "gw.example.com"},
 					},
 				},
 			},
@@ -351,7 +348,7 @@ func TestGatewayAddress(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
 				Status: gatewayv1.GatewayStatus{
 					Addresses: []gatewayv1.GatewayStatusAddress{
-						{Type: addressTypePtr(gatewayv1.IPAddressType), Value: "10.0.0.1"},
+						{Type: ptr.To(gatewayv1.IPAddressType), Value: "10.0.0.1"},
 					},
 				},
 			},

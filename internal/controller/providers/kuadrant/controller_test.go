@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -668,6 +669,347 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
 		Expect(binding.Status.URL).To(Equal("http://mcp.example.com/mcp"))
+	})
+
+	It("should use public-hostname from ConfigMap and ignore MCPGatewayExtension", func() {
+		createMCPServer()
+
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     gatewayv1.SectionName(defaultSectionName),
+						Port:     80,
+						Protocol: gatewayv1.HTTPProtocolType,
+						Hostname: hostnamePtr("*.mcp.local"),
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		createGatewayExtension("extension-host.example.com")
+
+		createConfigMap(map[string]string{
+			configKeyGatewayName:      "my-gateway",
+			configKeyGatewayNamespace: "gateway-ns",
+			configKeyPrefix:           "myserver_",
+			configKeyPublicHostname:   "configmap-host.example.com",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		setHTTPRouteAccepted(ctx, route)
+		setRegistrationReady(ctx, bindingName, testNamespace)
+
+		_, err = doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
+		Expect(binding.Status.URL).To(Equal("http://configmap-host.example.com/mcp"))
+	})
+
+	It("should fall back to public listener hostname when MCPGatewayExtension has no publicHost", func() {
+		createMCPServer()
+
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     gatewayv1.SectionName(defaultSectionName),
+						Port:     80,
+						Protocol: gatewayv1.HTTPProtocolType,
+						Hostname: hostnamePtr("*.mcp.local"),
+					},
+					{
+						Name:     "mcp",
+						Port:     443,
+						Protocol: gatewayv1.HTTPSProtocolType,
+						Hostname: hostnamePtr("public.mcp.example.com"),
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		createGatewayExtension("")
+
+		createConfigMap(map[string]string{
+			configKeyGatewayName:      "my-gateway",
+			configKeyGatewayNamespace: "gateway-ns",
+			configKeyPrefix:           "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		setHTTPRouteAccepted(ctx, route)
+		setRegistrationReady(ctx, bindingName, testNamespace)
+
+		_, err = doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
+		Expect(binding.Status.URL).To(Equal("https://public.mcp.example.com/mcp"))
+	})
+
+	It("should fall back to Gateway status address when no MCPGatewayExtension and no public-hostname", func() {
+		createMCPServer()
+
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     gatewayv1.SectionName(defaultSectionName),
+						Port:     80,
+						Protocol: gatewayv1.HTTPProtocolType,
+						Hostname: hostnamePtr("*.mcp.local"),
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(gw), gw)).To(Succeed())
+		gw.Status.Addresses = []gatewayv1.GatewayStatusAddress{
+			{
+				Type:  ptr.To(gatewayv1.HostnameAddressType),
+				Value: "gateway.example.com",
+			},
+		}
+		Expect(k8sClient.Status().Update(ctx, gw)).To(Succeed())
+
+		createConfigMap(map[string]string{
+			configKeyGatewayName:      "my-gateway",
+			configKeyGatewayNamespace: "gateway-ns",
+			configKeyPrefix:           "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		setHTTPRouteAccepted(ctx, route)
+		setRegistrationReady(ctx, bindingName, testNamespace)
+
+		_, err = doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
+		Expect(binding.Status.URL).To(Equal("http://gateway.example.com/mcp"))
+	})
+
+	It("should error when multiple MCPGatewayExtensions target the same gateway", func() {
+		createMCPServer()
+
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     gatewayv1.SectionName(defaultSectionName),
+						Port:     80,
+						Protocol: gatewayv1.HTTPProtocolType,
+						Hostname: hostnamePtr("*.mcp.local"),
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		createGatewayExtension("host1.example.com")
+
+		ext2 := &kuadrantapi.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "second-extension",
+				Namespace: "gateway-ns",
+			},
+			Spec: kuadrantapi.MCPGatewayExtensionSpec{
+				PublicHost: "host2.example.com",
+				TargetRef: kuadrantapi.TargetReference{
+					Group:       "gateway.networking.k8s.io",
+					Kind:        "Gateway",
+					Name:        "my-gateway",
+					Namespace:   "gateway-ns",
+					SectionName: "mcp",
+				},
+			},
+		}
+		ext2.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPGatewayExtension"))
+		Expect(k8sClient.Create(ctx, ext2)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, ext2) }()
+
+		createConfigMap(map[string]string{
+			configKeyGatewayName:      "my-gateway",
+			configKeyGatewayNamespace: "gateway-ns",
+			configKeyPrefix:           "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		setHTTPRouteAccepted(ctx, route)
+		setRegistrationReady(ctx, bindingName, testNamespace)
+
+		_, err = doReconcile()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("multiple MCPGatewayExtensions"))
+	})
+
+	It("should derive scheme from public listener protocol (HTTPS)", func() {
+		createMCPServer()
+
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     gatewayv1.SectionName(defaultSectionName),
+						Port:     443,
+						Protocol: gatewayv1.HTTPSProtocolType,
+						Hostname: hostnamePtr("*.mcp.local"),
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		createConfigMap(map[string]string{
+			configKeyGatewayName:      "my-gateway",
+			configKeyGatewayNamespace: "gateway-ns",
+			configKeyPrefix:           "myserver_",
+			configKeyPublicHostname:   "secure.example.com",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		setHTTPRouteAccepted(ctx, route)
+		setRegistrationReady(ctx, bindingName, testNamespace)
+
+		_, err = doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
+		Expect(binding.Status.URL).To(Equal("https://secure.example.com/mcp"))
+	})
+
+	It("should use route-hostname for HTTPRoute independently from public-hostname for status URL", func() {
+		createMCPServer()
+
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     gatewayv1.SectionName(defaultSectionName),
+						Port:     80,
+						Protocol: gatewayv1.HTTPProtocolType,
+						Hostname: hostnamePtr("*.mcp.local"),
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		createConfigMap(map[string]string{
+			configKeyGatewayName:      "my-gateway",
+			configKeyGatewayNamespace: "gateway-ns",
+			configKeyRouteHostname:    "internal.mcp.local",
+			configKeyPublicHostname:   "public.example.com",
+			configKeyPrefix:           "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying HTTPRoute uses route-hostname")
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		Expect(route.Spec.Hostnames).To(HaveLen(1))
+		Expect(string(route.Spec.Hostnames[0])).To(Equal("internal.mcp.local"))
+
+		setHTTPRouteAccepted(ctx, route)
+		setRegistrationReady(ctx, bindingName, testNamespace)
+
+		_, err = doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying status URL uses public-hostname")
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		Expect(binding.Status.URL).To(Equal("http://public.example.com/mcp"))
 	})
 
 	It("should prefer explicit route-hostname from ConfigMap over auto-construction", func() {
