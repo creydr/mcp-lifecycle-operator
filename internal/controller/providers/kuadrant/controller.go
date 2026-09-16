@@ -527,7 +527,7 @@ func (r *Reconciler) schemeFromListener(ctx context.Context, gwName, gwNamespace
 	gw := &gatewayv1.Gateway{}
 	if err := r.Get(ctx, client.ObjectKey{Name: gwName, Namespace: gwNamespace}, gw); err != nil {
 		if apierrors.IsNotFound(err) {
-			return "http", nil
+			return providers.SchemeHTTP, nil
 		}
 		return "", fmt.Errorf("failed to get Gateway %s/%s: %w", gwNamespace, gwName, err)
 	}
@@ -536,16 +536,16 @@ func (r *Reconciler) schemeFromListener(ctx context.Context, gwName, gwNamespace
 			return protocolToScheme(listener.Protocol), nil
 		}
 	}
-	return "http", nil
+	return providers.SchemeHTTP, nil
 }
 
 func (r *Reconciler) schemeFromExtension(ctx context.Context, gwName, gwNamespace string, ext *kuadrantapi.MCPGatewayExtension) string {
 	if ext.Spec.TargetRef.SectionName == "" {
-		return "http"
+		return providers.SchemeHTTP
 	}
 	scheme, err := r.schemeFromListener(ctx, gwName, gwNamespace, ext.Spec.TargetRef.SectionName)
 	if err != nil {
-		return "http"
+		return providers.SchemeHTTP
 	}
 	return scheme
 }
@@ -572,9 +572,9 @@ func (r *Reconciler) listenerHostname(ctx context.Context, gwName, gwNamespace, 
 func protocolToScheme(protocol gatewayv1.ProtocolType) string {
 	switch protocol {
 	case gatewayv1.HTTPSProtocolType, gatewayv1.TLSProtocolType:
-		return "https"
+		return providers.SchemeHTTPS
 	default:
-		return "http"
+		return providers.SchemeHTTP
 	}
 }
 

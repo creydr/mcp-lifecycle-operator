@@ -53,8 +53,8 @@ func GatewayAddress(ctx context.Context, c client.Client, gwName, gwNamespace st
 }
 
 const (
-	schemeHTTP  = "http"
-	schemeHTTPS = "https"
+	SchemeHTTP  = "http"
+	SchemeHTTPS = "https"
 )
 
 // SchemeFromAcceptedRoute determines the URL scheme (http or https) by
@@ -82,7 +82,7 @@ func SchemeFromAcceptedRoute(ctx context.Context, c client.Client, route *gatewa
 		gw := &gatewayv1.Gateway{}
 		if err := c.Get(ctx, client.ObjectKey{Name: gwName, Namespace: gwNamespace}, gw); err != nil {
 			if apierrors.IsNotFound(err) {
-				return schemeHTTP, nil
+				return SchemeHTTP, nil
 			}
 			return "", fmt.Errorf("failed to get Gateway %s/%s: %w", gwNamespace, gwName, err)
 		}
@@ -97,13 +97,13 @@ func SchemeFromAcceptedRoute(ctx context.Context, c client.Client, route *gatewa
 
 		for _, listener := range gw.Spec.Listeners {
 			if listener.Protocol == gatewayv1.HTTPSProtocolType || listener.Protocol == gatewayv1.TLSProtocolType {
-				return schemeHTTPS, nil
+				return SchemeHTTPS, nil
 			}
 		}
 
-		return schemeHTTP, nil
+		return SchemeHTTP, nil
 	}
-	return schemeHTTP, nil
+	return SchemeHTTP, nil
 }
 
 func isParentAccepted(parent gatewayv1.RouteParentStatus) bool {
@@ -119,8 +119,8 @@ func isParentAccepted(parent gatewayv1.RouteParentStatus) bool {
 func protocolToScheme(protocol gatewayv1.ProtocolType) string {
 	switch protocol {
 	case gatewayv1.HTTPSProtocolType, gatewayv1.TLSProtocolType:
-		return schemeHTTPS
+		return SchemeHTTPS
 	default:
-		return schemeHTTP
+		return SchemeHTTP
 	}
 }
