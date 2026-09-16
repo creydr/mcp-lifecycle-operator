@@ -63,7 +63,8 @@ const (
 
 	configKeyGatewayName      = "gateway-name"
 	configKeyGatewayNamespace = "gateway-namespace"
-	configKeyHostname         = "hostname"
+	configKeyRouteHostname    = "route-hostname"
+	configKeyPublicHostname   = "public-hostname"
 
 	reasonRouteNotAccepted = "RouteNotAccepted"
 )
@@ -186,8 +187,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		},
 	}
 
-	if hostname, ok := configMap.Data[configKeyHostname]; ok && hostname != "" {
-		httpRoute.Spec.Hostnames = []gatewayv1.Hostname{gatewayv1.Hostname(hostname)}
+	if routeHostname, ok := configMap.Data[configKeyRouteHostname]; ok && routeHostname != "" {
+		httpRoute.Spec.Hostnames = []gatewayv1.Hostname{gatewayv1.Hostname(routeHostname)}
 	}
 
 	if err := controllerutil.SetControllerReference(binding, httpRoute, r.Scheme); err != nil {
@@ -229,17 +230,29 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
 
-	url := ""
-	if hostname, ok := configMap.Data[configKeyHostname]; ok && hostname != "" {
-		scheme, schemeErr := providers.SchemeFromAcceptedRoute(ctx, r.Client, route, gwName, gwNamespace)
-		if schemeErr != nil {
-			return ctrl.Result{}, schemeErr
+	publicHost := configMap.Data[configKeyPublicHostname]
+	if publicHost == "" {
+		var addrErr error
+		publicHost, addrErr = providers.GatewayAddress(ctx, r.Client, gwName, gwNamespace)
+		if addrErr != nil {
+			return ctrl.Result{}, addrErr
 		}
-		url = fmt.Sprintf("%s://%s%s", scheme, hostname, path)
+	}
+	if publicHost == "" {
+		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
+			mcpcontroller.ReasonPublicAddressPending,
+			"Waiting for public address: no public-hostname in ConfigMap and no Gateway status address available", "")
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
 
+	scheme, schemeErr := providers.SchemeFromAcceptedRoute(ctx, r.Client, route, gwName, gwNamespace)
+	if schemeErr != nil {
+		return ctrl.Result{}, schemeErr
+	}
+	statusURL := fmt.Sprintf("%s://%s%s", scheme, publicHost, path)
+
 	return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionTrue,
-		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted by gateway", url)
+		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted by gateway", statusURL)
 }
 
 func (r *Reconciler) setNotRegistered(
