@@ -475,7 +475,7 @@ func (r *Reconciler) resolvePublicEndpoint(ctx context.Context, cfg *parsedConfi
 		return &publicEndpoint{host: cfg.publicHostname, scheme: scheme}, nil
 	}
 
-	ext, err := r.findMCPGatewayExtension(ctx, cfg.gwName, cfg.gwNamespace)
+	ext, err := r.findMCPGatewayExtension(ctx, cfg.gwName, cfg.gwNamespace, cfg.sectionName)
 	if err != nil {
 		return nil, err
 	}
@@ -496,22 +496,40 @@ func (r *Reconciler) resolvePublicEndpoint(ctx context.Context, cfg *parsedConfi
 	return nil, nil
 }
 
-func (r *Reconciler) findMCPGatewayExtension(ctx context.Context, gwName, gwNamespace string) (*kuadrantapi.MCPGatewayExtension, error) {
+// findMCPGatewayExtension finds the MCPGatewayExtension targeting the given
+// Gateway and listener. An extension whose targetRef.sectionName matches the
+// listener is preferred; an extension with an empty targetRef.sectionName
+// targets the whole Gateway and is used as a fallback.
+func (r *Reconciler) findMCPGatewayExtension(ctx context.Context, gwName, gwNamespace, sectionName string) (*kuadrantapi.MCPGatewayExtension, error) {
 	extList := &kuadrantapi.MCPGatewayExtensionList{}
 	if err := r.List(ctx, extList); err != nil {
 		return nil, fmt.Errorf("listing MCPGatewayExtensions: %w", err)
 	}
 
-	var matches []kuadrantapi.MCPGatewayExtension
+	var specific, wholeGateway []kuadrantapi.MCPGatewayExtension
 	for _, ext := range extList.Items {
 		ref := ext.Spec.TargetRef
+		if ref.Group != "" && ref.Group != gatewayv1.GroupName {
+			continue
+		}
 		refNS := ref.Namespace
 		if refNS == "" {
 			refNS = ext.Namespace
 		}
-		if ref.Kind == "Gateway" && ref.Name == gwName && refNS == gwNamespace {
-			matches = append(matches, ext)
+		if ref.Kind != "Gateway" || ref.Name != gwName || refNS != gwNamespace {
+			continue
 		}
+		switch ref.SectionName {
+		case sectionName:
+			specific = append(specific, ext)
+		case "":
+			wholeGateway = append(wholeGateway, ext)
+		}
+	}
+
+	matches := specific
+	if len(matches) == 0 {
+		matches = wholeGateway
 	}
 
 	switch len(matches) {
