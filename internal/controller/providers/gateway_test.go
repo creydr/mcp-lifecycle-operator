@@ -313,6 +313,100 @@ func TestSchemeFromAcceptedRoute_TransientError(t *testing.T) {
 	}
 }
 
+func addressTypePtr(t gatewayv1.AddressType) *gatewayv1.AddressType {
+	return &t
+}
+
+func TestGatewayAddress(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := gatewayv1.Install(scheme); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name        string
+		gateway     *gatewayv1.Gateway
+		gwName      string
+		gwNamespace string
+		want        string
+		wantErr     bool
+	}{
+		{
+			name: "prefers Hostname over IPAddress",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Status: gatewayv1.GatewayStatus{
+					Addresses: []gatewayv1.GatewayStatusAddress{
+						{Type: addressTypePtr(gatewayv1.IPAddressType), Value: "10.0.0.1"},
+						{Type: addressTypePtr(gatewayv1.HostnameAddressType), Value: "gw.example.com"},
+					},
+				},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: "gw.example.com",
+		},
+		{
+			name: "falls back to IPAddress when no Hostname",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Status: gatewayv1.GatewayStatus{
+					Addresses: []gatewayv1.GatewayStatusAddress{
+						{Type: addressTypePtr(gatewayv1.IPAddressType), Value: "10.0.0.1"},
+					},
+				},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: "10.0.0.1",
+		},
+		{
+			name: "returns empty when no addresses",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: "",
+		},
+		{
+			name:    "returns empty when gateway not found",
+			gateway: nil,
+			gwName:  "gw", gwNamespace: "default",
+			want: "",
+		},
+		{
+			name: "nil type defaults to IPAddress",
+			gateway: &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Status: gatewayv1.GatewayStatus{
+					Addresses: []gatewayv1.GatewayStatusAddress{
+						{Value: "10.0.0.2"},
+					},
+				},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: "10.0.0.2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objs := []runtime.Object{}
+			if tt.gateway != nil {
+				objs = append(objs, tt.gateway)
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
+
+			got, err := GatewayAddress(context.Background(), c, tt.gwName, tt.gwNamespace)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GatewayAddress() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("GatewayAddress() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func sectionNamePtr(s string) *gatewayv1.SectionName {
 	sn := gatewayv1.SectionName(s)
 	return &sn
