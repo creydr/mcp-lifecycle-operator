@@ -219,7 +219,7 @@ data:
 | `gateway-name`      | Yes      |         | Name of the existing Gateway resource                        |
 | `gateway-namespace` | Yes      |         | Namespace where the Gateway resource lives                   |
 | `route-hostname`    | No       | auto    | Hostname for the HTTPRoute. When omitted, auto-constructed from the Gateway listener's wildcard hostname (e.g., `*.mcp.local` + MCPServer name = `my-server.mcp.local`). Set explicitly to override. |
-| `public-hostname`   | No       | auto    | Public hostname for the status URL. When omitted, resolved via: MCPGatewayExtension `publicHost` → public listener hostname → Gateway status addresses. Set explicitly to override all auto-resolution. |
+| `public-hostname`   | No       | auto    | Public hostname for the status URL. When omitted, resolved via: MCPGatewayExtension `publicHost` → public listener hostname. Set explicitly to override all auto-resolution. |
 | `prefix`            | Yes      |         | Tool/prompt name prefix for federation (e.g., `myserver_`)   |
 | `section-name`      | No       | `mcps`  | Gateway listener section name for the parent reference       |
 

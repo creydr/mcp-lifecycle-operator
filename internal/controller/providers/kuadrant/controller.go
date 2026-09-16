@@ -238,7 +238,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if ep == nil {
 		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
 			mcpcontroller.ReasonPublicAddressPending,
-			"Waiting for public address: no public-hostname in ConfigMap, no MCPGatewayExtension publicHost, and no Gateway status address available", "")
+			"Waiting for public address: no public-hostname in ConfigMap, no MCPGatewayExtension publicHost, and no public listener hostname available", "")
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
 
@@ -463,7 +463,7 @@ func (r *Reconciler) resolveHostname(ctx context.Context, mcpServerName, gwName,
 
 // resolvePublicEndpoint determines the public host and scheme for the status URL.
 // Fallback chain: ConfigMap public-hostname → MCPGatewayExtension.publicHost →
-// public listener hostname → Gateway.status.addresses.
+// public listener hostname.
 // Returns nil when no source provides a public hostname (caller should requeue).
 func (r *Reconciler) resolvePublicEndpoint(ctx context.Context, cfg *parsedConfig) (*publicEndpoint, error) {
 	if cfg.publicHostname != "" {
@@ -490,18 +490,6 @@ func (r *Reconciler) resolvePublicEndpoint(ctx context.Context, cfg *parsedConfi
 		if listenerHost != "" {
 			return &publicEndpoint{host: listenerHost, scheme: scheme}, nil
 		}
-	}
-
-	addr, err := providers.GatewayAddress(ctx, r.Client, cfg.gwName, cfg.gwNamespace)
-	if err != nil {
-		return nil, err
-	}
-	if addr != "" {
-		scheme, err := r.schemeFromListener(ctx, cfg.gwName, cfg.gwNamespace, cfg.sectionName)
-		if err != nil {
-			return nil, err
-		}
-		return &publicEndpoint{host: addr, scheme: scheme}, nil
 	}
 
 	return nil, nil

@@ -28,7 +28,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -782,7 +781,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(binding.Status.URL).To(Equal("https://public.mcp.example.com/mcp"))
 	})
 
-	It("should fall back to Gateway status address when no MCPGatewayExtension and no public-hostname", func() {
+	It("should set PublicAddressPending when no MCPGatewayExtension and no public-hostname", func() {
 		createMCPServer()
 
 		gw := &gatewayv1.Gateway{
@@ -806,15 +805,6 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
 		defer func() { _ = k8sClient.Delete(ctx, gw) }()
 
-		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(gw), gw)).To(Succeed())
-		gw.Status.Addresses = []gatewayv1.GatewayStatusAddress{
-			{
-				Type:  ptr.To(gatewayv1.HostnameAddressType),
-				Value: "gateway.example.com",
-			},
-		}
-		Expect(k8sClient.Status().Update(ctx, gw)).To(Succeed())
-
 		createConfigMap(map[string]string{
 			configKeyGatewayName:      "my-gateway",
 			configKeyGatewayNamespace: "gateway-ns",
@@ -837,8 +827,8 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
 		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
 		Expect(registered).NotTo(BeNil())
-		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
-		Expect(binding.Status.URL).To(Equal("http://gateway.example.com/mcp"))
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Reason).To(Equal(mcpcontroller.ReasonPublicAddressPending))
 	})
 
 	It("should error when multiple MCPGatewayExtensions target the same gateway", func() {
