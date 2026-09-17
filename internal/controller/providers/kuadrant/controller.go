@@ -475,7 +475,7 @@ func (r *Reconciler) resolvePublicEndpoint(ctx context.Context, cfg *parsedConfi
 		return &publicEndpoint{host: cfg.publicHostname, scheme: scheme}, nil
 	}
 
-	ext, err := r.findMCPGatewayExtension(ctx, cfg.gwName, cfg.gwNamespace, cfg.sectionName)
+	ext, err := r.findMCPGatewayExtension(ctx, cfg.gwName, cfg.gwNamespace)
 	if err != nil {
 		return nil, err
 	}
@@ -497,16 +497,17 @@ func (r *Reconciler) resolvePublicEndpoint(ctx context.Context, cfg *parsedConfi
 }
 
 // findMCPGatewayExtension finds the MCPGatewayExtension targeting the given
-// Gateway. Preference order: an extension whose targetRef.sectionName matches
-// the config's listener, then a whole-Gateway extension (empty sectionName),
-// then the sole extension on the Gateway regardless of sectionName.
-func (r *Reconciler) findMCPGatewayExtension(ctx context.Context, gwName, gwNamespace, sectionName string) (*kuadrantapi.MCPGatewayExtension, error) {
+// Gateway. It matches on Gateway identity only, ignoring sectionName — the
+// extension and the config may legitimately target different listeners (e.g.
+// public vs internal). When multiple extensions target the same Gateway, it
+// returns an error directing the user to set public-hostname explicitly.
+func (r *Reconciler) findMCPGatewayExtension(ctx context.Context, gwName, gwNamespace string) (*kuadrantapi.MCPGatewayExtension, error) {
 	extList := &kuadrantapi.MCPGatewayExtensionList{}
 	if err := r.List(ctx, extList); err != nil {
 		return nil, fmt.Errorf("listing MCPGatewayExtensions: %w", err)
 	}
 
-	var specific, wholeGateway, allForGateway []kuadrantapi.MCPGatewayExtension
+	var matches []kuadrantapi.MCPGatewayExtension
 	for _, ext := range extList.Items {
 		ref := ext.Spec.TargetRef
 		if ref.Group != "" && ref.Group != gatewayv1.GroupName {
@@ -519,21 +520,7 @@ func (r *Reconciler) findMCPGatewayExtension(ctx context.Context, gwName, gwName
 		if ref.Kind != "Gateway" || ref.Name != gwName || refNS != gwNamespace {
 			continue
 		}
-		allForGateway = append(allForGateway, ext)
-		switch ref.SectionName {
-		case sectionName:
-			specific = append(specific, ext)
-		case "":
-			wholeGateway = append(wholeGateway, ext)
-		}
-	}
-
-	matches := specific
-	if len(matches) == 0 {
-		matches = wholeGateway
-	}
-	if len(matches) == 0 {
-		matches = allForGateway
+		matches = append(matches, ext)
 	}
 
 	switch len(matches) {

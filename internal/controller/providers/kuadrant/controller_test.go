@@ -903,7 +903,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(registered.Message).To(ContainSubstring("multiple MCPGatewayExtensions"))
 	})
 
-	It("should resolve the correct extension when multiple MCPGatewayExtensions target different sectionNames", func() {
+	It("should error when multiple MCPGatewayExtensions target the same gateway on different sectionNames", func() {
 		createMCPServer()
 
 		gw := &gatewayv1.Gateway{
@@ -971,11 +971,12 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
 		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
 		Expect(registered).NotTo(BeNil())
-		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
-		Expect(binding.Status.URL).To(Equal("http://mcps.example.com/mcp"))
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Reason).To(Equal(mcpcontroller.ReasonGatewayNotRegistered))
+		Expect(registered.Message).To(ContainSubstring("multiple MCPGatewayExtensions"))
 	})
 
-	It("should fall back to sole extension on gateway when its sectionName differs from config", func() {
+	It("should use extension on gateway when its sectionName differs from config", func() {
 		createMCPServer()
 
 		gw := &gatewayv1.Gateway{
