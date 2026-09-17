@@ -355,6 +355,38 @@ var _ = Describe("HTTPRoute Provider Controller", func() {
 		Expect(registered.Reason).To(Equal(mcpcontroller.ReasonPublicAddressPending))
 	})
 
+	It("should fall back to route-hostname for status URL when no public-hostname set", func() {
+		createMCPServer()
+		createConfigMap(map[string]string{
+			configKeyGatewayName:      testGatewayName,
+			configKeyGatewayNamespace: testGatewayNS,
+			configKeyRouteHostname:    "route.mcp.local",
+		})
+		createBinding(ProviderName)
+
+		r := newReconciler()
+		_, err := r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: bindingName, Namespace: testNamespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		setHTTPRouteAccepted(ctx, route)
+
+		_, err = r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: bindingName, Namespace: testNamespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
+		Expect(binding.Status.URL).To(Equal("http://route.mcp.local/mcp"))
+	})
+
 	It("should use default /mcp path when MCPServer path not set", func() {
 		server := newTestMCPServer(mcpServerName)
 		server.Spec.Config.Path = ""

@@ -145,7 +145,7 @@ data:
 | `gateway-name`      | Yes      | Name of the existing Gateway resource              |
 | `gateway-namespace` | Yes      | Namespace where the Gateway resource lives          |
 | `route-hostname`    | No       | Hostname to set on the HTTPRoute for routing        |
-| `public-hostname`   | No       | Public hostname for the status URL. When omitted, resolved from the Gateway's status addresses |
+| `public-hostname`   | No       | Public hostname for the status URL. When omitted, falls back to `route-hostname`, then to the Gateway's status addresses |
 
 !!! warning "Cross-namespace routing"
     When the Gateway lives in a different namespace than the MCPServer (as in this example), the Gateway must explicitly allow cross-namespace routes. By default, Gateway API sets `allowedRoutes.namespaces.from: Same`, which rejects routes from other namespaces. Configure the Gateway listener to accept routes from the MCPServer's namespace:

@@ -230,13 +230,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
 
-	publicHost := configMap.Data[configKeyPublicHostname]
-	if publicHost == "" {
-		var addrErr error
-		publicHost, addrErr = providers.GatewayAddress(ctx, r.Client, gwName, gwNamespace)
-		if addrErr != nil {
-			return ctrl.Result{}, addrErr
-		}
+	publicHost, addrErr := r.resolvePublicHost(ctx, configMap.Data, gwName, gwNamespace)
+	if addrErr != nil {
+		return ctrl.Result{}, addrErr
 	}
 	if publicHost == "" {
 		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
@@ -264,6 +260,16 @@ func (r *Reconciler) setNotRegistered(
 		return err
 	}
 	return r.updateBindingStatus(ctx, binding, metav1.ConditionFalse, mcpcontroller.ReasonGatewayNotRegistered, message, "")
+}
+
+func (r *Reconciler) resolvePublicHost(ctx context.Context, configData map[string]string, gwName, gwNamespace string) (string, error) {
+	if host := configData[configKeyPublicHostname]; host != "" {
+		return host, nil
+	}
+	if host := configData[configKeyRouteHostname]; host != "" {
+		return host, nil
+	}
+	return providers.GatewayAddress(ctx, r.Client, gwName, gwNamespace)
 }
 
 func (r *Reconciler) deleteStaleHTTPRoute(ctx context.Context, binding *mcpv1alpha1.MCPGatewayBinding) error {

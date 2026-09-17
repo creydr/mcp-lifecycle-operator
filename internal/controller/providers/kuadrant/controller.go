@@ -481,7 +481,7 @@ func (r *Reconciler) resolvePublicEndpoint(ctx context.Context, cfg *parsedConfi
 	}
 
 	if ext != nil {
-		scheme := r.schemeFromExtension(ctx, cfg.gwName, cfg.gwNamespace, ext)
+		scheme := r.schemeFromExtension(ctx, cfg.gwName, cfg.gwNamespace, cfg.sectionName, ext)
 
 		if ext.Spec.PublicHost != "" {
 			return &publicEndpoint{host: ext.Spec.PublicHost, scheme: scheme}, nil
@@ -497,16 +497,16 @@ func (r *Reconciler) resolvePublicEndpoint(ctx context.Context, cfg *parsedConfi
 }
 
 // findMCPGatewayExtension finds the MCPGatewayExtension targeting the given
-// Gateway and listener. An extension whose targetRef.sectionName matches the
-// listener is preferred; an extension with an empty targetRef.sectionName
-// targets the whole Gateway and is used as a fallback.
+// Gateway. Preference order: an extension whose targetRef.sectionName matches
+// the config's listener, then a whole-Gateway extension (empty sectionName),
+// then the sole extension on the Gateway regardless of sectionName.
 func (r *Reconciler) findMCPGatewayExtension(ctx context.Context, gwName, gwNamespace, sectionName string) (*kuadrantapi.MCPGatewayExtension, error) {
 	extList := &kuadrantapi.MCPGatewayExtensionList{}
 	if err := r.List(ctx, extList); err != nil {
 		return nil, fmt.Errorf("listing MCPGatewayExtensions: %w", err)
 	}
 
-	var specific, wholeGateway []kuadrantapi.MCPGatewayExtension
+	var specific, wholeGateway, allForGateway []kuadrantapi.MCPGatewayExtension
 	for _, ext := range extList.Items {
 		ref := ext.Spec.TargetRef
 		if ref.Group != "" && ref.Group != gatewayv1.GroupName {
@@ -519,6 +519,7 @@ func (r *Reconciler) findMCPGatewayExtension(ctx context.Context, gwName, gwName
 		if ref.Kind != "Gateway" || ref.Name != gwName || refNS != gwNamespace {
 			continue
 		}
+		allForGateway = append(allForGateway, ext)
 		switch ref.SectionName {
 		case sectionName:
 			specific = append(specific, ext)
@@ -530,6 +531,9 @@ func (r *Reconciler) findMCPGatewayExtension(ctx context.Context, gwName, gwName
 	matches := specific
 	if len(matches) == 0 {
 		matches = wholeGateway
+	}
+	if len(matches) == 0 {
+		matches = allForGateway
 	}
 
 	switch len(matches) {
@@ -558,11 +562,15 @@ func (r *Reconciler) schemeFromListener(ctx context.Context, gwName, gwNamespace
 	return providers.SchemeHTTP, nil
 }
 
-func (r *Reconciler) schemeFromExtension(ctx context.Context, gwName, gwNamespace string, ext *kuadrantapi.MCPGatewayExtension) string {
-	if ext.Spec.TargetRef.SectionName == "" {
+func (r *Reconciler) schemeFromExtension(ctx context.Context, gwName, gwNamespace, configSectionName string, ext *kuadrantapi.MCPGatewayExtension) string {
+	sectionName := ext.Spec.TargetRef.SectionName
+	if sectionName == "" {
+		sectionName = configSectionName
+	}
+	if sectionName == "" {
 		return providers.SchemeHTTP
 	}
-	scheme, err := r.schemeFromListener(ctx, gwName, gwNamespace, ext.Spec.TargetRef.SectionName)
+	scheme, err := r.schemeFromListener(ctx, gwName, gwNamespace, sectionName)
 	if err != nil {
 		return providers.SchemeHTTP
 	}
