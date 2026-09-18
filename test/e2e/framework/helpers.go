@@ -148,6 +148,31 @@ func WaitForMCPServerGatewayAddress(ctx context.Context, t *testing.T, r *resour
 	}
 }
 
+// WaitForMCPServerAddressContains polls until the MCPServer's status.address.url
+// contains the given substring. Useful for waiting on a ConfigMap change to
+// propagate through reconciliation.
+func WaitForMCPServerAddressContains(ctx context.Context, t *testing.T, r *resources.Resources,
+	server *mcpv1beta1.MCPServer, substring string, timeout ...time.Duration) {
+	t.Helper()
+	d := 3 * time.Minute
+	if len(timeout) > 0 {
+		d = timeout[0]
+	}
+	err := wait.For(
+		conditions.New(r).ResourceMatch(server, func(obj k8s.Object) bool {
+			s := obj.(*mcpv1beta1.MCPServer)
+			return s.Status.Address != nil && strings.Contains(s.Status.Address.URL, substring)
+		}),
+		wait.WithContext(ctx),
+		wait.WithTimeout(d),
+		wait.WithInterval(2*time.Second),
+	)
+	if err != nil {
+		t.Fatalf("MCPServer %s/%s: timed out waiting for status.address.url to contain %q: %v",
+			server.Namespace, server.Name, substring, err)
+	}
+}
+
 // WaitForMCPServerReconciledAndReady polls until the controller has reconciled the
 // current generation (observedGeneration >= generation) and the server is fully
 // ready: both Available=True (workload up) and Verified=True (MCP handshake
@@ -405,6 +430,24 @@ func CreateGatewayConfigMap(ctx context.Context, t *testing.T, cfg *envconf.Conf
 		t.Fatalf("failed to create gateway ConfigMap: %v", err)
 	}
 	t.Logf("created gateway ConfigMap %s/%s", namespace, name)
+}
+
+// UpdateGatewayConfigMap updates an existing gateway ConfigMap's data using
+// a read-modify-write loop with automatic retry on conflict.
+func UpdateGatewayConfigMap(ctx context.Context, t *testing.T, cfg *envconf.Config,
+	name, namespace string, data map[string]string) {
+	t.Helper()
+	r := cfg.Client().Resources()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+	UpdateWithRetry(ctx, t, r, cm, func(c *corev1.ConfigMap) {
+		c.Data = data
+	})
+	t.Logf("updated gateway ConfigMap %s/%s", namespace, name)
 }
 
 const defaultListenerName = "http"
