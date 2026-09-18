@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	kuadrantapi "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller/providers/kuadrant/api"
 )
@@ -63,12 +64,24 @@ var _ = Describe("findMCPGatewayExtension", func() {
 	find := func(exts ...*kuadrantapi.MCPGatewayExtension) (*kuadrantapi.MCPGatewayExtension, error) {
 		scheme := runtime.NewScheme()
 		Expect(kuadrantapi.AddToScheme(scheme)).To(Succeed())
-		builder := fake.NewClientBuilder().WithScheme(scheme)
+		Expect(gatewayv1.Install(scheme)).To(Succeed())
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-gateway", Namespace: "gateway-ns"},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{{
+					Name:     "mcps",
+					Port:     80,
+					Protocol: gatewayv1.HTTPProtocolType,
+				}},
+			},
+		}
+		builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gw)
 		for _, e := range exts {
 			builder = builder.WithObjects(e)
 		}
 		r := &Reconciler{Client: builder.Build(), Scheme: scheme}
-		return r.findMCPGatewayExtension(context.Background(), "my-gateway", "gateway-ns")
+		return r.findMCPGatewayExtension(context.Background(), "my-gateway", "gateway-ns", "mcps")
 	}
 
 	DescribeTable("selects the single extension that targets the gateway",
