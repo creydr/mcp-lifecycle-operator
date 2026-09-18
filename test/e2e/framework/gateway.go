@@ -19,31 +19,16 @@ limitations under the License.
 package framework
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"testing"
-	"time"
-
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
-
-	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
-	"sigs.k8s.io/e2e-framework/pkg/envconf"
 )
-
-// GatewayServiceLocator describes how to find the gateway data plane service.
-type GatewayServiceLocator struct {
-	Namespace     string
-	LabelSelector map[string]string
-}
 
 // ProviderConfig describes a gateway provider for conformance testing.
 type ProviderConfig struct {
-	Name           string
-	ConfigData     map[string]string
-	GatewayService GatewayServiceLocator
+	Name       string
+	ConfigData map[string]string
 }
 
 var providers = map[string]ProviderConfig{
@@ -56,13 +41,6 @@ var providers = map[string]ProviderConfig{
 			"route-hostname":    "mcp.e2e.test",
 			"public-hostname":   "mcp.e2e.test",
 		},
-		GatewayService: GatewayServiceLocator{
-			Namespace: "envoy-gateway-system",
-			LabelSelector: map[string]string{
-				"gateway.envoyproxy.io/owning-gateway-name":      "e2e-gateway",
-				"gateway.envoyproxy.io/owning-gateway-namespace": "gateway-system",
-			},
-		},
 	},
 	"kuadrant": {
 		Name: "kuadrant",
@@ -73,12 +51,6 @@ var providers = map[string]ProviderConfig{
 			"route-hostname":    "mcp.127-0-0-1.sslip.io",
 			"public-hostname":   "mcp.127-0-0-1.sslip.io",
 			"prefix":            "e2e_",
-		},
-		GatewayService: GatewayServiceLocator{
-			Namespace: "gateway-system",
-			LabelSelector: map[string]string{
-				"gateway.networking.k8s.io/gateway-name": "mcp-gateway",
-			},
 		},
 	},
 }
@@ -106,44 +78,19 @@ func providerNames() []string {
 	return names
 }
 
-// GatewayProxyHTTPClient discovers the gateway data plane service by label
-// selector and returns an *http.Client plus the full API-server proxy URL for
-// reaching it on port 80. The caller should set the Host header on requests to
-// route through the gateway's data plane.
-func GatewayProxyHTTPClient(t *testing.T, cfg *envconf.Config,
-	locator GatewayServiceLocator, path string) (*http.Client, string) {
+// NewGatewayRequest builds an *http.Request that targets the gateway's
+// LoadBalancer address directly. The Host header is set to hostname so
+// the gateway's listener can perform host-based routing.
+func NewGatewayRequest(t *testing.T, gatewayAddress, method, path, hostname string) *http.Request {
 	t.Helper()
 
-	svc := resolveGatewayService(t, cfg, locator)
-	return ServiceProxyHTTPClient(t, cfg, svc.Namespace, svc.Name, 80, path)
-}
-
-func resolveGatewayService(t *testing.T, cfg *envconf.Config, loc GatewayServiceLocator) corev1.Service {
-	t.Helper()
-	r := cfg.Client().Resources().WithNamespace(loc.Namespace)
-	sel := labels.SelectorFromSet(loc.LabelSelector).String()
-
-	var found corev1.Service
-	deadline := time.Now().Add(60 * time.Second)
-	for {
-		var list corev1.ServiceList
-		if err := r.List(context.Background(), &list,
-			resources.WithLabelSelector(sel),
-		); err != nil {
-			t.Fatalf("failed to list gateway services: %v", err)
-		}
-		if len(list.Items) == 1 {
-			found = list.Items[0]
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for gateway data plane service in %s matching %v (found %d)",
-				loc.Namespace, loc.LabelSelector, len(list.Items))
-		}
-		time.Sleep(2 * time.Second)
+	u := fmt.Sprintf("http://%s%s", gatewayAddress, path)
+	req, err := http.NewRequest(method, u, nil)
+	if err != nil {
+		t.Fatalf("failed to create gateway request: %v", err)
 	}
-	t.Logf("resolved gateway service: %s/%s", found.Namespace, found.Name)
-	return found
+	req.Host = hostname
+	return req
 }
 
 type hostOverrideTransport struct {
@@ -158,11 +105,15 @@ func (t *hostOverrideTransport) RoundTrip(req *http.Request) (*http.Response, er
 
 // WithHostOverride wraps the given http.Client's transport so that every
 // outgoing request sets the Host header to the given value. This is needed
-// when routing through the Kubernetes API server proxy to a gateway that
-// performs host-based routing.
+// when the MCP SDK client creates its own requests internally and the
+// gateway performs host-based routing.
 func WithHostOverride(c *http.Client, host string) *http.Client {
+	base := c.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
 	return &http.Client{
-		Transport: &hostOverrideTransport{base: c.Transport, host: host},
+		Transport: &hostOverrideTransport{base: base, host: host},
 	}
 }
 

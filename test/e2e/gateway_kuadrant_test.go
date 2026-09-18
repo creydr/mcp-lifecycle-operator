@@ -61,7 +61,8 @@ func TestKuadrantProviderResources(t *testing.T) {
 			ensureKuadrantScheme(t, cfg.Client().Resources().GetScheme())
 
 			ns := ctx.Value(f.NsKey).(string)
-			prov.ConfigData["section-name"] = f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			listenerName, _ := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			prov.ConfigData["section-name"] = listenerName
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "kuadrant-resources", false,
 				f.WithGateway(prov.Name, configMapName),

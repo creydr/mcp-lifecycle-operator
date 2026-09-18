@@ -20,6 +20,8 @@ package e2e
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"net/url"
 	"testing"
 	"time"
@@ -49,7 +51,8 @@ func TestGatewayConformanceBindingLifecycle(t *testing.T) {
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			prov.ConfigData["section-name"] = f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			listenerName, _ := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			prov.ConfigData["section-name"] = listenerName
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
 			return f.SetupMCPServer(ctx, t, cfg, "conformance-lifecycle", false,
 				f.WithGateway(prov.Name, configMapName),
@@ -121,7 +124,8 @@ func TestGatewayConformanceRemoval(t *testing.T) {
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			prov.ConfigData["section-name"] = f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			listenerName, _ := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			prov.ConfigData["section-name"] = listenerName
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "conformance-removal", false,
 				f.WithGateway(prov.Name, configMapName),
@@ -186,13 +190,17 @@ func TestGatewayConformanceHTTPReachability(t *testing.T) {
 	prov := f.ActiveProvider(t)
 	const configMapName = "gw-reachability-config"
 
+	var gwAddr string
+
 	feature := features.New("Gateway conformance: HTTP reachability").
 		WithLabel(category.Label, category.Networking).
 		WithLabel(speed.Label, speed.Moderate).
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			prov.ConfigData["section-name"] = f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			listenerName, addr := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			prov.ConfigData["section-name"] = listenerName
+			gwAddr = addr
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "conformance-http", true,
 				f.WithGateway(prov.Name, configMapName),
@@ -221,8 +229,7 @@ func TestGatewayConformanceHTTPReachability(t *testing.T) {
 				t.Fatalf("failed to parse status.address.url %q: %v", server.Status.Address.URL, err)
 			}
 
-			httpClient, proxyURL := f.GatewayProxyHTTPClient(t, cfg, prov.GatewayService, parsed.Path)
-			httpClient = f.WithHostOverride(httpClient, parsed.Hostname())
+			httpClient := f.WithHostOverride(&http.Client{}, parsed.Hostname())
 
 			mcpClient := mcp.NewClient(
 				&mcp.Implementation{
@@ -233,7 +240,7 @@ func TestGatewayConformanceHTTPReachability(t *testing.T) {
 			)
 
 			transport := &mcp.StreamableClientTransport{
-				Endpoint:   proxyURL,
+				Endpoint:   fmt.Sprintf("http://%s%s", gwAddr, parsed.Path),
 				HTTPClient: httpClient,
 			}
 
