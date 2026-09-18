@@ -550,7 +550,7 @@ func (r *Reconciler) filterExtensionsByPort(ctx context.Context, gwName, gwNames
 	gw := &gatewayv1.Gateway{}
 	if err := r.Get(ctx, client.ObjectKey{Name: gwName, Namespace: gwNamespace}, gw); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, nil
+			return nil, fmt.Errorf("gateway %s/%s not found", gwNamespace, gwName)
 		}
 		return nil, fmt.Errorf("failed to get Gateway %s/%s: %w", gwNamespace, gwName, err)
 	}
