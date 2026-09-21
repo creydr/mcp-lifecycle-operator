@@ -42,6 +42,7 @@ import (
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 	mcpv1beta1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1beta1"
 	mcpcontroller "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller"
+	"github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller/providers"
 )
 
 // ContextKey is used to store values in context.
@@ -454,14 +455,14 @@ const defaultListenerName = "http"
 
 func waitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resources, name, namespace string) string {
 	t.Helper()
-	gw := &gatewayv1.Gateway{}
 	deadline := time.Now().Add(120 * time.Second)
 	for {
-		if err := r.Get(ctx, name, namespace, gw); err != nil {
+		addr, err := providers.GatewayAddress(ctx, r.GetControllerRuntimeClient(), name, namespace)
+		if err != nil {
 			t.Fatalf("failed to read Gateway %s/%s: %v", namespace, name, err)
 		}
-		if len(gw.Status.Addresses) > 0 {
-			return gw.Status.Addresses[0].Value
+		if addr != "" {
+			return addr
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for Gateway %s/%s to receive a LoadBalancer address", namespace, name)
