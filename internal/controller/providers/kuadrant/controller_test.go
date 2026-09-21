@@ -517,7 +517,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		route := &gatewayv1.HTTPRoute{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
 		Expect(route.Spec.Hostnames).To(HaveLen(1))
-		Expect(string(route.Spec.Hostnames[0])).To(Equal(mcpServerName + ".mcp.local"))
+		Expect(string(route.Spec.Hostnames[0])).To(Equal(mcpServerName + "." + testNamespace + ".mcp.local"))
 	})
 
 	It("should set Registered=False when hostname omitted and listener has no wildcard", func() {

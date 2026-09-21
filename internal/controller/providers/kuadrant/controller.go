@@ -191,7 +191,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	routeHostname := cfg.routeHostname
 	if routeHostname == "" {
 		var resolveErr error
-		routeHostname, resolveErr = r.resolveHostname(ctx, mcpServer.Name, cfg.gwName, cfg.gwNamespace, cfg.sectionName)
+		routeHostname, resolveErr = r.resolveHostname(ctx, mcpServer.Name, mcpServer.Namespace, cfg.gwName, cfg.gwNamespace, cfg.sectionName)
 		if resolveErr != nil {
 			return ctrl.Result{}, r.setNotRegistered(ctx, binding, resolveErr.Error())
 		}
@@ -434,9 +434,11 @@ func (r *Reconciler) deleteStaleResources(ctx context.Context, binding *mcpv1alp
 }
 
 // resolveHostname constructs the backend hostname from the Gateway listener's
-// wildcard hostname. For example, if the listener hostname is "*.mcp.local" and
-// the MCPServer name is "my-server", the result is "my-server.mcp.local".
-func (r *Reconciler) resolveHostname(ctx context.Context, mcpServerName, gwName, gwNamespace, sectionName string) (string, error) {
+// wildcard hostname. The namespace is included to avoid collisions when
+// multiple namespaces contain MCPServers with the same name. For example,
+// if the listener hostname is "*.mcp.local", the MCPServer name is "my-server"
+// and its namespace is "team-a", the result is "my-server.team-a.mcp.local".
+func (r *Reconciler) resolveHostname(ctx context.Context, mcpServerName, mcpServerNamespace, gwName, gwNamespace, sectionName string) (string, error) {
 	gw := &gatewayv1.Gateway{}
 	if err := r.Get(ctx, client.ObjectKey{Name: gwName, Namespace: gwNamespace}, gw); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -456,7 +458,7 @@ func (r *Reconciler) resolveHostname(ctx context.Context, mcpServerName, gwName,
 		if !strings.HasPrefix(h, "*.") {
 			return "", fmt.Errorf("gateway listener %q hostname %q is not a wildcard; set %q in the ConfigMap", sectionName, h, configKeyRouteHostname)
 		}
-		return mcpServerName + h[1:], nil
+		return fmt.Sprintf("%s.%s%s", mcpServerName, mcpServerNamespace, h[1:]), nil
 	}
 
 	return "", fmt.Errorf("gateway %s/%s has no listener named %q", gwNamespace, gwName, sectionName)
