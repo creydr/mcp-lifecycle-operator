@@ -35,6 +35,7 @@ import (
 
 const (
 	dscKind                  = "DataScienceCluster"
+	dscGroup                 = "datasciencecluster.opendatahub.io"
 	dscDefaultName           = "default-dsc"
 	componentPath            = "mcplifecycleoperator"
 	stateManaged             = "Managed"
@@ -98,7 +99,7 @@ func MaybeEnsureDSCManaged(ctx context.Context, cl cr.Client) (DSCState, error) 
 
 	dsc := &unstructured.Unstructured{}
 	dsc.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "datasciencecluster.opendatahub.io",
+		Group:   dscGroup,
 		Version: "v2",
 		Kind:    dscKind,
 	})
@@ -195,7 +196,7 @@ func MaybeRestoreDSCState(ctx context.Context, cl cr.Client, state DSCState) err
 
 	dsc := &unstructured.Unstructured{}
 	dsc.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   "datasciencecluster.opendatahub.io",
+		Group:   dscGroup,
 		Version: "v2",
 		Kind:    dscKind,
 	})
@@ -225,7 +226,7 @@ func MaybeRestoreDSCState(ctx context.Context, cl cr.Client, state DSCState) err
 
 func dscGVK() schema.GroupVersionKind {
 	return schema.GroupVersionKind{
-		Group:   "datasciencecluster.opendatahub.io",
+		Group:   dscGroup,
 		Version: "v2",
 		Kind:    dscKind,
 	}

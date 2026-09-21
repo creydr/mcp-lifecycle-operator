@@ -28,12 +28,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
+	mcpv1beta1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1beta1"
 )
 
 const caBundleKey = "ca.crt"
 
-func urlScheme(mcpServer *mcpv1alpha1.MCPServer) string {
+func urlScheme(mcpServer *mcpv1beta1.MCPServer) string {
 	if mcpServer.Spec.Transport != nil &&
 		mcpServer.Spec.Transport.TLS != nil &&
 		mcpServer.Spec.Transport.TLS.Enabled {
@@ -46,7 +46,7 @@ func cloneDefaultTransport() *http.Transport {
 	return http.DefaultTransport.(*http.Transport).Clone()
 }
 
-func buildTLSTransport(ctx context.Context, reader client.Reader, namespace string, tlsConfig *mcpv1alpha1.TLSClientConfig) (*http.Transport, error) {
+func buildTLSTransport(ctx context.Context, reader client.Reader, namespace string, tlsConfig *mcpv1beta1.TLSClientConfig) (*http.Transport, error) {
 	if tlsConfig == nil || !tlsConfig.Enabled {
 		return nil, nil
 	}
@@ -54,6 +54,9 @@ func buildTLSTransport(ctx context.Context, reader client.Reader, namespace stri
 	transport := cloneDefaultTransport()
 
 	if tlsConfig.InsecureSkipVerify {
+		// nosemgrep: go.lang.security.audit.crypto.tls.insecure-skip-verify
+		// Opt-in only: the user explicitly set spec.transport.tls.insecureSkipVerify.
+		// A Warning event is emitted (emitInsecureTLSWarning) whenever this path is taken.
 		transport.TLSClientConfig = &tls.Config{
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: true, //nolint:gosec // user-requested via spec
@@ -93,24 +96,38 @@ func buildTLSTransport(ctx context.Context, reader client.Reader, namespace stri
 	return transport, nil
 }
 
+// applyTLSProfileWithFloor applies the operator-wide TLS profile (min version,
+// cipher suites and TLS 1.3 group/curve preferences) to the client config used
+// for MCP server handshakes, while guaranteeing the negotiated minimum version
+// never drops below the floor the transport was built with (TLS 1.2). Group
+// preferences and the X25519MLKEM768 hybrid only take effect once TLS 1.3 is
+// negotiated; the client keeps the TLS 1.2 floor so it can still reach servers
+// that do not speak TLS 1.3. Set TLS_MIN_VERSION=VersionTLS13 to require 1.3.
+func applyTLSProfileWithFloor(cfg *tls.Config, profile func(*tls.Config)) {
+	floor := cfg.MinVersion
+	profile(cfg)
+	if cfg.MinVersion < floor {
+		cfg.MinVersion = floor
+	}
+}
+
 // updateTLSCABundleHash persists the CA bundle hash in-memory only after the
 // status write succeeded and the handshake passed. A failed handshake preserves
 // the previous hash so re-verification is forced on the next reconcile.
 func (r *MCPServerReconciler) updateTLSCABundleHash(
-	mcpServer *mcpv1alpha1.MCPServer,
+	mcpServer *mcpv1beta1.MCPServer,
 	hash string,
-	readyCondition metav1.Condition,
+	verifiedCondition metav1.Condition,
 ) {
 	key := mcpServer.Namespace + "/" + mcpServer.Name
 	if hash == "" {
 		r.tlsCABundleHashes.Delete(key)
-	} else if readyCondition.Status == metav1.ConditionTrue &&
-		readyCondition.Reason == ReasonAvailable {
+	} else if verifiedCondition.Status == metav1.ConditionTrue {
 		r.tlsCABundleHashes.Store(key, hash)
 	}
 }
 
-func computeTLSCABundleHash(ctx context.Context, reader client.Reader, namespace string, tlsConfig *mcpv1alpha1.TLSClientConfig) string {
+func computeTLSCABundleHash(ctx context.Context, reader client.Reader, namespace string, tlsConfig *mcpv1beta1.TLSClientConfig) string {
 	if tlsConfig == nil || !tlsConfig.Enabled || tlsConfig.InsecureSkipVerify || tlsConfig.CABundleSecret == nil {
 		return ""
 	}

@@ -25,11 +25,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
+	mcpv1beta1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1beta1"
 )
 
 // applyConfigHash computes the config hash and sets it as a pod template
@@ -37,7 +38,7 @@ import (
 // to keep cyclomatic complexity in check.
 func (r *MCPServerReconciler) applyConfigHash(
 	ctx context.Context,
-	mcpServer *mcpv1alpha1.MCPServer,
+	mcpServer *mcpv1beta1.MCPServer,
 	deployment *appsv1.Deployment,
 ) error {
 	configHash, err := r.computeConfigHash(ctx, mcpServer)
@@ -59,7 +60,7 @@ func (r *MCPServerReconciler) applyConfigHash(
 // Returns "" if no refs are listed or all referenced resources are not found.
 func (r *MCPServerReconciler) computeConfigHash(
 	ctx context.Context,
-	mcpServer *mcpv1alpha1.MCPServer,
+	mcpServer *mcpv1beta1.MCPServer,
 ) (string, error) {
 	configMapNames := extractConfigMapNames(mcpServer)
 	secretNames := extractPodSecretNames(mcpServer)
@@ -146,7 +147,7 @@ func (r *MCPServerReconciler) findMCPServersForResource(
 	indexKey string,
 ) []reconcile.Request {
 	logger := log.FromContext(ctx)
-	var mcpServers mcpv1alpha1.MCPServerList
+	var mcpServers mcpv1beta1.MCPServerList
 
 	// Use the index to find MCPServers that reference this resource
 	if err := r.List(ctx, &mcpServers,
@@ -155,7 +156,7 @@ func (r *MCPServerReconciler) findMCPServersForResource(
 	); err != nil {
 		logger.Error(err, "Failed to list MCPServers for resource",
 			"resourceName", resourceName,
-			"namespace", namespace,
+			keyNamespace, namespace,
 			"indexKey", indexKey)
 		return []reconcile.Request{}
 	}
@@ -181,18 +182,29 @@ func (r *MCPServerReconciler) findMCPServersForSecret(ctx context.Context, secre
 	return r.findMCPServersForResource(ctx, secret.GetName(), secret.GetNamespace(), secretIndexKey)
 }
 
+func (r *MCPServerReconciler) findMCPServersForPod(ctx context.Context, pod client.Object) []reconcile.Request {
+	name, ok := pod.GetLabels()[LabelKeyMCPServer]
+	if !ok || name == "" {
+		return nil
+	}
+
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{Name: name, Namespace: pod.GetNamespace()},
+	}}
+}
+
 // extractConfigMapNames is an index extractor that returns all ConfigMap names
 // referenced by an MCPServer. Used for efficient ConfigMap watch lookups.
 // This returns both required and optional ConfigMap references, matching Kubernetes
 // semantics where optional resources are still used when available.
 func extractConfigMapNames(obj client.Object) []string {
-	mcpServer := obj.(*mcpv1alpha1.MCPServer)
+	mcpServer := obj.(*mcpv1beta1.MCPServer)
 	var configMaps []string
 	seen := make(map[string]bool)
 
 	// Extract from storage mounts
 	for _, storage := range mcpServer.Spec.Config.Storage {
-		if storage.Source.Type == mcpv1alpha1.StorageTypeConfigMap &&
+		if storage.Source.Type == mcpv1beta1.StorageTypeConfigMap &&
 			storage.Source.ConfigMap != nil {
 			name := storage.Source.ConfigMap.Name
 			if !seen[name] {
@@ -237,7 +249,7 @@ func extractSecretNames(obj client.Object) []string {
 		seen[s] = true
 	}
 
-	mcpServer := obj.(*mcpv1alpha1.MCPServer)
+	mcpServer := obj.(*mcpv1beta1.MCPServer)
 	if mcpServer.Spec.Transport != nil &&
 		mcpServer.Spec.Transport.TLS != nil &&
 		mcpServer.Spec.Transport.TLS.CABundleSecret != nil {
@@ -254,12 +266,12 @@ func extractSecretNames(obj client.Object) []string {
 // or references via env. Used for the deployment config hash so that CA
 // bundle rotation (an operator-only concern) does not roll pods.
 func extractPodSecretNames(obj client.Object) []string {
-	mcpServer := obj.(*mcpv1alpha1.MCPServer)
+	mcpServer := obj.(*mcpv1beta1.MCPServer)
 	var secrets []string
 	seen := make(map[string]bool)
 
 	for _, storage := range mcpServer.Spec.Config.Storage {
-		if storage.Source.Type == mcpv1alpha1.StorageTypeSecret &&
+		if storage.Source.Type == mcpv1beta1.StorageTypeSecret &&
 			storage.Source.Secret != nil {
 			name := storage.Source.Secret.SecretName
 			if !seen[name] {

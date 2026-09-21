@@ -81,8 +81,15 @@ COVER_PROFILE ?= cover.out
 # Human-readable reports (not used by CI; see kubernetes-sigs/cluster-api `test-cover` pattern).
 COVER_OUTPUT_DIR ?= out
 
+KUADRANT_TEST_CRD_DIR := internal/controller/providers/kuadrant/testdata
+
+.PHONY: kuadrant-test-crds
+kuadrant-test-crds: kustomize ## Download Kuadrant CRDs for unit tests.
+	$(KUSTOMIZE) build 'https://github.com/Kuadrant/mcp-gateway/config/crd?ref=$(MCP_GATEWAY_VERSION)' \
+		-o $(KUADRANT_TEST_CRD_DIR)/
+
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
+test: manifests generate fmt vet setup-envtest kuadrant-test-crds ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" \
 		go test $$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...) -coverprofile $(COVER_PROFILE)
 
@@ -108,6 +115,29 @@ cover-clean: ## Remove cover.out and out/coverage.{txt,html} from test-cover.
 	rm -f $(COVER_PROFILE) $(COVER_OUTPUT_DIR)/coverage.txt $(COVER_OUTPUT_DIR)/coverage.html
 
 KIND_CLUSTER ?= mcp-lifecycle-operator-test-e2e
+CERT_MANAGER_VERSION ?= v1.17.2
+ENVOY_GATEWAY_VERSION ?= v1.9.0
+ISTIO_VERSION ?= 1.31.0
+GATEWAY_API_VERSION ?= v1.6.2
+MCP_GATEWAY_VERSION ?= v0.9.0
+
+.PHONY: deploy-certmanager
+deploy-certmanager: ## Install cert-manager in the cluster (required for conversion webhooks).
+	$(KUBECTL) apply -f https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.yaml
+	$(KUBECTL) wait --for=condition=Available deployment --all -n cert-manager --timeout=120s
+
+.PHONY: migrate-storage
+migrate-storage: ## Rewrite stored MCPServer objects to the v1beta1 storage version (requires a cluster storage-version-migrator).
+	$(KUBECTL) apply -k config/storage-migration
+	@echo "Applied StorageVersionMigration 'mcpservers-v1beta1' (accepted, not yet complete)."
+	@echo "Migration is complete only once status.conditions reports Succeeded=True."
+	@echo "Check status: $(KUBECTL) get storageversionmigration mcpservers-v1beta1 -o yaml"
+	@echo "When Succeeded, the migrator has rewritten stored objects, but the CRD"
+	@echo "status.storedVersions still lists v1alpha1 until pruned - see the docs:"
+	@echo "  site-src/operating/storage-version-migration.md (Removing v1alpha1)"
+	@echo "This object is one-shot: to retry after a Failed result, first run"
+	@echo "  $(KUBECTL) delete storageversionmigration mcpservers-v1beta1"
+	@echo "then re-run 'make migrate-storage' (re-applying alone will not re-trigger)."
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -125,15 +155,48 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 	esac
 
 .PHONY: deploy-test-e2e
-deploy-test-e2e: setup-test-e2e manifests generate ## Build and deploy the operator to the Kind cluster for e2e tests.
+deploy-test-e2e: setup-test-e2e deploy-certmanager manifests generate ## Build and deploy the operator to the Kind cluster for e2e tests.
 	$(MAKE) docker-build IMG=example.com/mcp-lifecycle-operator:e2e
 	$(KIND) load docker-image example.com/mcp-lifecycle-operator:e2e --name $(KIND_CLUSTER)
 	$(MAKE) install deploy IMG=example.com/mcp-lifecycle-operator:e2e
 	$(KUBECTL) rollout status deployment/mcp-lifecycle-operator-controller-manager -n mcp-lifecycle-operator-system --timeout=120s
 
+GATEWAY_PROVIDER ?= httproute
+
 .PHONY: test-e2e
 test-e2e: ## Run the e2e tests (requires operator already deployed, see deploy-test-e2e).
 	go test -tags=e2e ./test/e2e/ -v -count=1 -timeout 1h
+
+.PHONY: deploy-gateway-envoygateway
+deploy-gateway-envoygateway: setup-test-e2e ## Install Envoy Gateway for gateway e2e tests.
+	$(KUBECTL) apply --server-side -f https://github.com/envoyproxy/gateway/releases/download/$(ENVOY_GATEWAY_VERSION)/install.yaml
+	$(KUBECTL) wait --for=condition=Available --timeout=300s deployment/envoy-gateway -n envoy-gateway-system
+	$(KUBECTL) wait --for=condition=Established --timeout=120s crd/httproutes.gateway.networking.k8s.io
+
+.PHONY: deploy-test-e2e-httproute
+deploy-test-e2e-httproute: deploy-gateway-envoygateway deploy-test-e2e ## Deploy for httproute gateway e2e tests.
+
+.PHONY: deploy-gateway-kuadrant
+deploy-gateway-kuadrant: setup-test-e2e istioctl ## Install Istio and Kuadrant MCP Gateway for gateway e2e tests.
+	$(KUBECTL) apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API_VERSION)/standard-install.yaml
+	$(KUBECTL) wait --for=condition=Established --timeout=120s crd/gateways.gateway.networking.k8s.io
+	$(ISTIOCTL) install --set profile=minimal -y
+	$(KUBECTL) wait --for=condition=Available --timeout=300s deployment/istiod -n istio-system
+	$(KUBECTL) apply -k 'https://github.com/Kuadrant/mcp-gateway/config/crd?ref=$(MCP_GATEWAY_VERSION)'
+	$(KUBECTL) wait --for=condition=Established --timeout=120s crd/mcpserverregistrations.mcp.kuadrant.io
+	$(KUBECTL) apply -k 'https://github.com/Kuadrant/mcp-gateway/config/mcp-gateway/overlays/mcp-system?ref=$(MCP_GATEWAY_VERSION)'
+	$(KUBECTL) wait --for=condition=Available --timeout=300s deployment/mcp-gateway-controller -n mcp-system
+	$(KUBECTL) apply -f test/e2e/testdata/kuadrant-gateway.yaml
+	$(KUBECTL) wait --for=condition=Accepted --timeout=120s gateway/mcp-gateway -n gateway-system
+	$(KUBECTL) wait --for=condition=Ready --timeout=300s mcpgatewayextension/mcp-gateway-extension -n mcp-system
+	$(KUBECTL) wait --for=condition=Available --timeout=300s deployment --all -n mcp-system
+
+.PHONY: deploy-test-e2e-kuadrant
+deploy-test-e2e-kuadrant: deploy-gateway-kuadrant deploy-test-e2e ## Deploy for kuadrant gateway e2e tests.
+
+.PHONY: test-e2e-gateway
+test-e2e-gateway: ## Run gateway e2e tests for a specific provider (set GATEWAY_PROVIDER=httproute|kuadrant).
+	GATEWAY_PROVIDER=$(GATEWAY_PROVIDER) go test -tags=e2e,e2e_gateway ./test/e2e/ -v -count=1 -timeout 1h -profile gateway-$(GATEWAY_PROVIDER)
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
@@ -155,6 +218,10 @@ verify: manifests generate fmt ## Verify generated code and formatting are up-to
 	else \
 		echo "Generated code and formatting are up-to-date."; \
 	fi
+
+.PHONY: verify-go-version
+verify-go-version: ## Verify the Dockerfile's Go version is not older than go.mod requires.
+	./hack/verify-go-version.sh
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -264,7 +331,7 @@ dir=$$(mktemp -d); \
 trap 'rm -rf "$$dir"' EXIT; \
 ln -s $(CURDIR)/$(1) $$dir/base && \
 printf 'resources:\n- base\n' > $$dir/kustomization.yaml && \
-cd $$dir && "$(KUSTOMIZE)" edit set image $(IMAGE_TAG_BASE)=$(2) && \
+cd $$dir && "$(KUSTOMIZE)" edit set image controller=$(2) && \
 "$(KUSTOMIZE)" build $$dir | "$(KUBECTL)" apply -f -
 endef
 
@@ -286,10 +353,11 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+ISTIOCTL ?= $(LOCALBIN)/istioctl
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.7.1
-CONTROLLER_TOOLS_VERSION ?= v0.20.0
+CONTROLLER_TOOLS_VERSION ?= v0.21.0
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
@@ -301,7 +369,14 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
   [ -n "$$v" ] || { echo "Set ENVTEST_K8S_VERSION manually (k8s.io/api replace has no tag)" >&2; exit 1; }; \
   printf '%s\n' "$$v" | sed -E 's/^v?[0-9]+\.([0-9]+).*/1.\1/')
 
-GOLANGCI_LINT_VERSION ?= v2.10.1
+GOLANGCI_LINT_VERSION ?= v2.13.0
+
+# GO_TOOLCHAIN is the toolchain declared in go.mod. Tools installed via
+# go-install-tool are built with it so their bundled go/types can parse the
+# project's Go version. Without this, 'go install' picks the minimum toolchain
+# satisfying the tool's own go directive (e.g. go1.26.x for controller-tools),
+# whose go/types cannot parse newer stdlib source and fails 'make generate'.
+GO_TOOLCHAIN ?= $(shell awk '/^toolchain /{print $$2; exit}' go.mod)
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
@@ -330,6 +405,18 @@ golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
+.PHONY: istioctl
+istioctl: $(ISTIOCTL) ## Download istioctl locally if necessary.
+$(ISTIOCTL): $(LOCALBIN)
+	@[ -f "$(ISTIOCTL)-$(ISTIO_VERSION)" ] || { \
+	set -eo pipefail; \
+	echo "Downloading istioctl $(ISTIO_VERSION)" ;\
+	curl -fsSL https://istio.io/downloadIstio | ISTIO_VERSION=$(ISTIO_VERSION) sh - ;\
+	mv istio-$(ISTIO_VERSION)/bin/istioctl "$(ISTIOCTL)-$(ISTIO_VERSION)" ;\
+	rm -rf istio-$(ISTIO_VERSION) ;\
+	}
+	@ln -sf "$$(realpath -e "$(ISTIOCTL)-$(ISTIO_VERSION)")" "$(ISTIOCTL)"
+
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
 # $2 - package url which can be installed
@@ -340,7 +427,7 @@ set -e; \
 package=$(2)@$(3) ;\
 echo "Downloading $${package}" ;\
 rm -f "$(1)" ;\
-GOBIN="$(LOCALBIN)" go install $${package} ;\
+GOBIN="$(LOCALBIN)" $(if $(GO_TOOLCHAIN),GOTOOLCHAIN=$(GO_TOOLCHAIN)) go install $${package} ;\
 mv "$(LOCALBIN)/$$(basename "$(1)")" "$(1)-$(3)" ;\
 } ;\
 ln -sf "$$(realpath "$(1)-$(3)")" "$(1)"
