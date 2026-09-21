@@ -42,7 +42,7 @@ import (
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 	mcpv1beta1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1beta1"
 	mcpcontroller "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller"
-	"github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller/providers"
+	gwproviders "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller/providers"
 )
 
 // ContextKey is used to store values in context.
@@ -457,7 +457,7 @@ func waitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resou
 	t.Helper()
 	deadline := time.Now().Add(120 * time.Second)
 	for {
-		addr, err := providers.GatewayAddress(ctx, r.GetControllerRuntimeClient(), name, namespace)
+		addr, err := gwproviders.GatewayAddress(ctx, r.GetControllerRuntimeClient(), name, namespace)
 		if err != nil {
 			t.Fatalf("failed to read Gateway %s/%s: %v", namespace, name, err)
 		}
