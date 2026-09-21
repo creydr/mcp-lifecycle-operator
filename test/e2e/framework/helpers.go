@@ -452,6 +452,24 @@ func UpdateGatewayConfigMap(ctx context.Context, t *testing.T, cfg *envconf.Conf
 
 const defaultListenerName = "http"
 
+func waitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resources, name, namespace string) string {
+	t.Helper()
+	gw := &gatewayv1.Gateway{}
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		if err := r.Get(ctx, name, namespace, gw); err != nil {
+			t.Fatalf("failed to read Gateway %s/%s: %v", namespace, name, err)
+		}
+		if len(gw.Status.Addresses) > 0 {
+			return gw.Status.Addresses[0].Value
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for Gateway %s/%s to receive a LoadBalancer address", namespace, name)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
 // EnsureGateway creates a GatewayClass, namespace, and Gateway resource if they don't
 // already exist. The Gateway allows routes from all namespaces so that HTTPRoutes
 // created in per-test namespaces are accepted by the gateway controller.

@@ -30,7 +30,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -189,26 +188,6 @@ type ListenerSpec struct {
 	Port     int32
 	Protocol gatewayv1.ProtocolType
 	Hostname *gatewayv1.Hostname
-}
-
-// waitForGatewayAddress polls until the Gateway has a LoadBalancer address
-// in its status, returning the first address value.
-func waitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resources, name, namespace string) string {
-	t.Helper()
-	gw := &gatewayv1.Gateway{}
-	deadline := time.Now().Add(120 * time.Second)
-	for {
-		if err := r.Get(ctx, name, namespace, gw); err != nil {
-			t.Fatalf("failed to read Gateway %s/%s: %v", namespace, name, err)
-		}
-		if len(gw.Status.Addresses) > 0 {
-			return gw.Status.Addresses[0].Value
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for Gateway %s/%s to receive a LoadBalancer address", namespace, name)
-		}
-		time.Sleep(2 * time.Second)
-	}
 }
 
 // EnsureMultiListenerGateway creates a Gateway with multiple listeners if it
