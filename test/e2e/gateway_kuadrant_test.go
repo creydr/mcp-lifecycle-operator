@@ -191,7 +191,7 @@ func TestKuadrantAutoConstructedHostname(t *testing.T) {
 				t.Fatalf("HTTPRoute not found: %v", err)
 			}
 
-			expectedHostname := server.Name + ".mcp.local"
+			expectedHostname := server.Name + "." + server.Namespace + ".mcp.local"
 			if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != expectedHostname {
 				t.Fatalf("expected HTTPRoute hostname %s, got %v", expectedHostname, route.Spec.Hostnames)
 			}
