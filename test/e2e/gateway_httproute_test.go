@@ -47,9 +47,10 @@ func TestHTTPRouteProviderResources(t *testing.T) {
 		WithLabel(scope.Label, scope.HTTPRoute).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName, _ := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			prov.ConfigData["section-name"] = listenerName
-			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			configData := prov.CopyConfigData()
+			configData["section-name"] = listenerName
+			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "httproute-resources", false,
 				f.WithGateway(prov.Name, configMapName),
 				f.WithPath("/mcp"),
@@ -130,7 +131,7 @@ func TestHTTPRouteFallbackToRouteHostname(t *testing.T) {
 		WithLabel(scope.Label, scope.HTTPRoute).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName, _ := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 
 			configData := map[string]string{
 				"gateway-name":      prov.ConfigData["gateway-name"],
@@ -185,8 +186,8 @@ func TestHTTPRouteFallbackToGatewayAddress(t *testing.T) {
 		WithLabel(scope.Label, scope.HTTPRoute).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName, addr := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			gwAddr = addr
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			gwAddr = f.WaitForGatewayAddress(ctx, t, cfg.Client().Resources(), prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"])
 
 			configData := map[string]string{
 				"gateway-name":      prov.ConfigData["gateway-name"],

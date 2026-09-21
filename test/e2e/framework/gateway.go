@@ -43,6 +43,16 @@ type ProviderConfig struct {
 	ConfigData map[string]string
 }
 
+// CopyConfigData returns a shallow copy of the provider's ConfigData map,
+// safe to mutate without affecting the global registry.
+func (p ProviderConfig) CopyConfigData() map[string]string {
+	cp := make(map[string]string, len(p.ConfigData))
+	for k, v := range p.ConfigData {
+		cp[k] = v
+	}
+	return cp
+}
+
 var providers = map[string]ProviderConfig{
 	"httproute": {
 		Name: "httproute",
@@ -226,11 +236,20 @@ func EnsureMultiListenerGateway(ctx context.Context, t *testing.T, cfg *envconf.
 			Listeners:        gwListeners,
 		},
 	}
-	if err := r.Create(ctx, gw); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("failed to create Gateway %s/%s: %v", namespace, name, err)
+	if err := r.Create(ctx, gw); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			t.Fatalf("failed to create Gateway %s/%s: %v", namespace, name, err)
+		}
+		if err := r.Update(ctx, gw); err != nil {
+			t.Fatalf("failed to update existing Gateway %s/%s: %v", namespace, name, err)
+		}
 	}
 
-	gatewayAddress := waitForGatewayAddress(ctx, t, r, name, namespace)
+	t.Cleanup(func() {
+		_ = r.Delete(context.Background(), gw)
+	})
+
+	gatewayAddress := WaitForGatewayAddress(ctx, t, r, name, namespace)
 
 	t.Logf("ensured multi-listener Gateway %s/%s (class=%s, listeners=%d, address=%s)",
 		namespace, name, gatewayClassName, len(listeners), gatewayAddress)

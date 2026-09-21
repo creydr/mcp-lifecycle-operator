@@ -453,7 +453,9 @@ func UpdateGatewayConfigMap(ctx context.Context, t *testing.T, cfg *envconf.Conf
 
 const defaultListenerName = "http"
 
-func waitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resources, name, namespace string) string {
+// WaitForGatewayAddress polls until the Gateway has a LoadBalancer address,
+// using the same address-type preference as the controller.
+func WaitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resources, name, namespace string) string {
 	t.Helper()
 	deadline := time.Now().Add(120 * time.Second)
 	for {
@@ -474,9 +476,9 @@ func waitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resou
 // EnsureGateway creates a GatewayClass, namespace, and Gateway resource if they don't
 // already exist. The Gateway allows routes from all namespaces so that HTTPRoutes
 // created in per-test namespaces are accepted by the gateway controller.
-// It returns the listener name and the gateway's LoadBalancer address.
+// It returns the listener name. Use WaitForGatewayAddress to obtain the LB address.
 func EnsureGateway(ctx context.Context, t *testing.T, cfg *envconf.Config,
-	name, namespace, gatewayClassName string) (string, string) {
+	name, namespace, gatewayClassName string) string {
 	t.Helper()
 	r := cfg.Client().Resources()
 
@@ -530,10 +532,8 @@ func EnsureGateway(ctx context.Context, t *testing.T, cfg *envconf.Config,
 		listenerName = string(existing.Spec.Listeners[0].Name)
 	}
 
-	gatewayAddress := waitForGatewayAddress(ctx, t, r, name, namespace)
-
-	t.Logf("ensured Gateway %s/%s (class=%s, listener=%s, address=%s)", namespace, name, gatewayClassName, listenerName, gatewayAddress)
-	return listenerName, gatewayAddress
+	t.Logf("ensured Gateway %s/%s (class=%s, listener=%s)", namespace, name, gatewayClassName, listenerName)
+	return listenerName
 }
 
 // WaitForBindingRegistered polls until the MCPGatewayBinding's Registered condition

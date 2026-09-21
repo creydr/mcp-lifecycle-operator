@@ -61,9 +61,10 @@ func TestKuadrantProviderResources(t *testing.T) {
 			ensureKuadrantScheme(t, cfg.Client().Resources().GetScheme())
 
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName, _ := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			prov.ConfigData["section-name"] = listenerName
-			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			configData := prov.CopyConfigData()
+			configData["section-name"] = listenerName
+			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "kuadrant-resources", false,
 				f.WithGateway(prov.Name, configMapName),
 				f.WithPath("/mcp"),
@@ -287,7 +288,7 @@ func TestKuadrantPublicHostnamePriority(t *testing.T) {
 			ns := ctx.Value(f.NsKey).(string)
 			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
 
-			listenerName, _ := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"priority-ext", ns,

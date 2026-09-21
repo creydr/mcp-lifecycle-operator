@@ -163,14 +163,29 @@ GATEWAY_PROVIDER ?= httproute
 
 .PHONY: deploy-cloud-provider-kind
 deploy-cloud-provider-kind: cloud-provider-kind ## Start cloud-provider-kind for LoadBalancer support on KinD.
-	@if [ -f /tmp/cloud-provider-kind.pid ] && kill -0 $$(cat /tmp/cloud-provider-kind.pid) 2>/dev/null; then \
-		echo "cloud-provider-kind is already running (PID: $$(cat /tmp/cloud-provider-kind.pid)). Skipping."; \
+	@if [ -f /tmp/cloud-provider-kind.pid ] && \
+		PID=$$(cat /tmp/cloud-provider-kind.pid) && \
+		kill -0 "$$PID" 2>/dev/null && \
+		ps -p "$$PID" -o args= 2>/dev/null | grep -q cloud-provider-kind; then \
+		echo "cloud-provider-kind is already running (PID: $$PID). Skipping."; \
 	else \
 		echo "Starting cloud-provider-kind (gateway-channel=disabled)..." ;\
-		"$(CLOUD_PROVIDER_KIND)" --gateway-channel disabled > /tmp/cloud-provider-kind.log 2>&1 & \
+		nohup "$(CLOUD_PROVIDER_KIND)" --gateway-channel disabled > /tmp/cloud-provider-kind.log 2>&1 & \
 		echo "$$!" > /tmp/cloud-provider-kind.pid ;\
+		disown 2>/dev/null || true ;\
 		echo "cloud-provider-kind started (PID: $$!)"; \
 		sleep 3; \
+	fi
+
+.PHONY: stop-cloud-provider-kind
+stop-cloud-provider-kind: ## Stop cloud-provider-kind if running.
+	@if [ -f /tmp/cloud-provider-kind.pid ]; then \
+		PID=$$(cat /tmp/cloud-provider-kind.pid) ;\
+		if kill -0 "$$PID" 2>/dev/null; then \
+			echo "Stopping cloud-provider-kind (PID: $$PID)..." ;\
+			kill "$$PID" 2>/dev/null || true ;\
+		fi ;\
+		rm -f /tmp/cloud-provider-kind.pid ;\
 	fi
 
 .PHONY: test-e2e
