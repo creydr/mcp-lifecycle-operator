@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -88,21 +89,6 @@ func providerNames() []string {
 		names = append(names, n)
 	}
 	return names
-}
-
-// NewGatewayRequest builds an *http.Request that targets the gateway's
-// LoadBalancer address directly. The Host header is set to hostname so
-// the gateway's listener can perform host-based routing.
-func NewGatewayRequest(t *testing.T, gatewayAddress, method, path, hostname string) *http.Request {
-	t.Helper()
-
-	u := fmt.Sprintf("http://%s%s", gatewayAddress, path)
-	req, err := http.NewRequest(method, u, nil)
-	if err != nil {
-		t.Fatalf("failed to create gateway request: %v", err)
-	}
-	req.Host = hostname
-	return req
 }
 
 type hostOverrideTransport struct {
@@ -205,6 +191,26 @@ type ListenerSpec struct {
 	Hostname *gatewayv1.Hostname
 }
 
+// waitForGatewayAddress polls until the Gateway has a LoadBalancer address
+// in its status, returning the first address value.
+func waitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resources, name, namespace string) string {
+	t.Helper()
+	gw := &gatewayv1.Gateway{}
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		if err := r.Get(ctx, name, namespace, gw); err != nil {
+			t.Fatalf("failed to read Gateway %s/%s: %v", namespace, name, err)
+		}
+		if len(gw.Status.Addresses) > 0 {
+			return gw.Status.Addresses[0].Value
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for Gateway %s/%s to receive a LoadBalancer address", namespace, name)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
 // EnsureMultiListenerGateway creates a Gateway with multiple listeners if it
 // doesn't already exist. Returns the gateway's LoadBalancer address.
 func EnsureMultiListenerGateway(ctx context.Context, t *testing.T, cfg *envconf.Config,
@@ -245,22 +251,7 @@ func EnsureMultiListenerGateway(ctx context.Context, t *testing.T, cfg *envconf.
 		t.Fatalf("failed to create Gateway %s/%s: %v", namespace, name, err)
 	}
 
-	existing := &gatewayv1.Gateway{}
-	deadline := time.Now().Add(120 * time.Second)
-	var gatewayAddress string
-	for {
-		if err := r.Get(ctx, name, namespace, existing); err != nil {
-			t.Fatalf("failed to read Gateway %s/%s: %v", namespace, name, err)
-		}
-		if len(existing.Status.Addresses) > 0 {
-			gatewayAddress = existing.Status.Addresses[0].Value
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for Gateway %s/%s to receive a LoadBalancer address", namespace, name)
-		}
-		time.Sleep(2 * time.Second)
-	}
+	gatewayAddress := waitForGatewayAddress(ctx, t, r, name, namespace)
 
 	t.Logf("ensured multi-listener Gateway %s/%s (class=%s, listeners=%d, address=%s)",
 		namespace, name, gatewayClassName, len(listeners), gatewayAddress)

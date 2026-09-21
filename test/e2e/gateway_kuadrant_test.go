@@ -180,6 +180,9 @@ func TestKuadrantAutoConstructedHostname(t *testing.T) {
 			binding := &mcpv1alpha1.MCPGatewayBinding{
 				ObjectMeta: metav1.ObjectMeta{Name: bindingName, Namespace: server.Namespace},
 			}
+			// Registered=False is expected: without an MCPGatewayExtension the
+			// MCPServerRegistration won't become ready, but the HTTPRoute (which
+			// we verify below) is created before the registration gate.
 			f.WaitForBindingRegistered(ctx, t, r, binding, metav1.ConditionFalse)
 
 			route := &gatewayv1.HTTPRoute{}
@@ -518,6 +521,72 @@ func TestKuadrantCrossNamespaceExtension(t *testing.T) {
 
 			f.AssertGatewayAddressURL(t, server, "cross-ns.example.com", "/mcp")
 			t.Logf("cross-namespace extension discovered: %s", server.Status.Address.URL)
+			return ctx
+		}).
+		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			return f.TeardownMCPServer(ctx, t, cfg)
+		}).
+		Feature()
+
+	testenv.Test(t, feature)
+}
+
+func TestKuadrantListenerHostnameFallback(t *testing.T) {
+	prov := f.ActiveProvider(t)
+	const configMapName = "gw-listener-fallback-config"
+
+	feature := features.New("Kuadrant: fallback to listener hostname when extension has no publicHost").
+		WithLabel(category.Label, category.Networking).
+		WithLabel(speed.Label, speed.Moderate).
+		WithLabel(scope.Label, scope.Kuadrant).
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			ensureKuadrantScheme(t, cfg.Client().Resources().GetScheme())
+
+			ns := ctx.Value(f.NsKey).(string)
+			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
+
+			listenerHost := gatewayv1.Hostname("listener.mcp.local")
+			f.EnsureMultiListenerGateway(ctx, t, cfg,
+				"kuadrant-listener-fallback-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+				[]f.ListenerSpec{
+					{Name: "mcp", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &listenerHost},
+				},
+			)
+
+			f.CreateMCPGatewayExtension(ctx, t, cfg,
+				"listener-ext", ns,
+				"kuadrant-listener-fallback-gw", prov.ConfigData["gateway-namespace"],
+				f.WithSectionName("mcp"),
+			)
+
+			configData := map[string]string{
+				"gateway-name":      "kuadrant-listener-fallback-gw",
+				"gateway-namespace": prov.ConfigData["gateway-namespace"],
+				"section-name":      "mcp",
+				"route-hostname":    "listener.mcp.local",
+				"prefix":            prov.ConfigData["prefix"],
+			}
+			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
+			ctx = f.SetupMCPServer(ctx, t, cfg, "listener-fb", true,
+				f.WithGateway(prov.Name, configMapName),
+				f.WithPath("/mcp"),
+			)
+
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+			f.WaitForMCPServerGatewayAddress(ctx, t, r, server)
+			return ctx
+		}).
+		Assess("status URL uses listener hostname as fallback", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+
+			if err := r.Get(ctx, server.Name, server.Namespace, server); err != nil {
+				t.Fatalf("failed to get MCPServer: %v", err)
+			}
+
+			f.AssertGatewayAddressURL(t, server, "listener.mcp.local", "/mcp")
+			t.Logf("listener hostname used as fallback (no publicHost on extension): %s", server.Status.Address.URL)
 			return ctx
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

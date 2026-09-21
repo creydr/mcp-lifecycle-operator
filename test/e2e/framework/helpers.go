@@ -511,21 +511,7 @@ func EnsureGateway(ctx context.Context, t *testing.T, cfg *envconf.Config,
 		listenerName = string(existing.Spec.Listeners[0].Name)
 	}
 
-	deadline := time.Now().Add(120 * time.Second)
-	var gatewayAddress string
-	for {
-		if err := r.Get(ctx, name, namespace, existing); err != nil {
-			t.Fatalf("failed to read Gateway %s/%s: %v", namespace, name, err)
-		}
-		if len(existing.Status.Addresses) > 0 {
-			gatewayAddress = existing.Status.Addresses[0].Value
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for Gateway %s/%s to receive a LoadBalancer address", namespace, name)
-		}
-		time.Sleep(2 * time.Second)
-	}
+	gatewayAddress := waitForGatewayAddress(ctx, t, r, name, namespace)
 
 	t.Logf("ensured Gateway %s/%s (class=%s, listener=%s, address=%s)", namespace, name, gatewayClassName, listenerName, gatewayAddress)
 	return listenerName, gatewayAddress
