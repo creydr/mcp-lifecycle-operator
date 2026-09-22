@@ -22,9 +22,13 @@ import (
 	"net/netip"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
+	mcpcontroller "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller"
 )
 
 // GatewayAddress returns a public address from the Gateway's status.
@@ -171,4 +175,33 @@ func FormatHost(host string) string {
 		return "[" + host + "]"
 	}
 	return host
+}
+
+// UpdateBindingStatus sets the Registered condition and URL on a binding's
+// status, skipping the write when nothing has changed.
+func UpdateBindingStatus(
+	ctx context.Context,
+	sw client.StatusWriter,
+	binding *mcpv1alpha1.MCPGatewayBinding,
+	status metav1.ConditionStatus,
+	reason, message, url string,
+) error {
+	existing := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+	if existing != nil && existing.Status == status && existing.Reason == reason &&
+		existing.Message == message && binding.Status.URL == url &&
+		existing.ObservedGeneration == binding.Generation {
+		return nil
+	}
+
+	condition := metav1.Condition{
+		Type:               mcpcontroller.ConditionTypeRegistered,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: binding.Generation,
+	}
+	meta.SetStatusCondition(&binding.Status.Conditions, condition)
+	binding.Status.URL = url
+
+	return sw.Update(ctx, binding)
 }

@@ -225,7 +225,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	if !providers.IsHTTPRouteAccepted(route, gwName, gwNamespace) {
-		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
+		statusErr := providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionFalse,
 			reasonRouteNotAccepted, "Waiting for gateway to accept HTTPRoute", "")
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
@@ -235,7 +235,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, addrErr
 	}
 	if publicHost == "" {
-		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
+		statusErr := providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionFalse,
 			mcpcontroller.ReasonPublicAddressPending,
 			"Waiting for public address: no public-hostname in ConfigMap and no Gateway status address available", "")
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
@@ -247,7 +247,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	statusURL := fmt.Sprintf("%s://%s%s", scheme, providers.FormatHost(publicHost), path)
 
-	return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionTrue,
+	return ctrl.Result{}, providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionTrue,
 		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted by gateway", statusURL)
 }
 
@@ -259,7 +259,7 @@ func (r *Reconciler) setNotRegistered(
 	if err := r.deleteStaleHTTPRoute(ctx, binding); err != nil {
 		return err
 	}
-	return r.updateBindingStatus(ctx, binding, metav1.ConditionFalse, mcpcontroller.ReasonGatewayNotRegistered, message, "")
+	return providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionFalse, mcpcontroller.ReasonGatewayNotRegistered, message, "")
 }
 
 func (r *Reconciler) resolvePublicHost(ctx context.Context, configData map[string]string, gwName, gwNamespace string) (string, error) {
@@ -284,32 +284,6 @@ func (r *Reconciler) deleteStaleHTTPRoute(ctx context.Context, binding *mcpv1alp
 		return fmt.Errorf("deleting stale HTTPRoute: %w", err)
 	}
 	return nil
-}
-
-func (r *Reconciler) updateBindingStatus(
-	ctx context.Context,
-	binding *mcpv1alpha1.MCPGatewayBinding,
-	status metav1.ConditionStatus,
-	reason, message, url string,
-) error {
-	existing := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
-	if existing != nil && existing.Status == status && existing.Reason == reason &&
-		existing.Message == message && binding.Status.URL == url &&
-		existing.ObservedGeneration == binding.Generation {
-		return nil
-	}
-
-	condition := metav1.Condition{
-		Type:               mcpcontroller.ConditionTypeRegistered,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: binding.Generation,
-	}
-	meta.SetStatusCondition(&binding.Status.Conditions, condition)
-	binding.Status.URL = url
-
-	return r.Status().Update(ctx, binding)
 }
 
 // SetupWithManager sets up the controller with the Manager.
