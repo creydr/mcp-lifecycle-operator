@@ -602,7 +602,7 @@ func (r *Reconciler) schemeFromListener(ctx context.Context, gwName, gwNamespace
 	}
 	for _, listener := range gw.Spec.Listeners {
 		if string(listener.Name) == sectionName {
-			return protocolToScheme(listener.Protocol), nil
+			return providers.ProtocolToScheme(listener.Protocol), nil
 		}
 	}
 	return providers.SchemeHTTP, nil
@@ -640,15 +640,6 @@ func (r *Reconciler) listenerHostname(ctx context.Context, gwName, gwNamespace, 
 		}
 	}
 	return ""
-}
-
-func protocolToScheme(protocol gatewayv1.ProtocolType) string {
-	switch protocol {
-	case gatewayv1.HTTPSProtocolType, gatewayv1.TLSProtocolType:
-		return providers.SchemeHTTPS
-	default:
-		return providers.SchemeHTTP
-	}
 }
 
 func (r *Reconciler) updateBindingStatus(

@@ -91,7 +91,7 @@ func SchemeFromAcceptedRoute(ctx context.Context, c client.Client, route *gatewa
 		if parent.ParentRef.SectionName != nil {
 			for _, listener := range gw.Spec.Listeners {
 				if listener.Name == *parent.ParentRef.SectionName {
-					return protocolToScheme(listener.Protocol), nil
+					return ProtocolToScheme(listener.Protocol), nil
 				}
 			}
 		}
@@ -117,7 +117,7 @@ func isParentAccepted(parent gatewayv1.RouteParentStatus) bool {
 	return false
 }
 
-func protocolToScheme(protocol gatewayv1.ProtocolType) string {
+func ProtocolToScheme(protocol gatewayv1.ProtocolType) string {
 	switch protocol {
 	case gatewayv1.HTTPSProtocolType, gatewayv1.TLSProtocolType:
 		return SchemeHTTPS
