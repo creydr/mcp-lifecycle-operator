@@ -1613,7 +1613,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 			Kind:       "ConfigMap",
 			Name:       "foreign-owner",
 			UID:        "foreign-uid",
-			Controller: ptr.To(true),
+			Controller: ptr.To(true), //nolint:modernize // new(bool) yields false, not true
 		}
 
 		foreignRoute := &gatewayv1.HTTPRoute{
