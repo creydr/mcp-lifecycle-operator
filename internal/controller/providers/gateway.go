@@ -126,6 +126,44 @@ func protocolToScheme(protocol gatewayv1.ProtocolType) string {
 	}
 }
 
+// IsHTTPRouteAccepted checks whether the given HTTPRoute has been accepted by
+// the specified Gateway. It requires both Accepted and ResolvedRefs conditions
+// to be True for the current route generation.
+func IsHTTPRouteAccepted(route *gatewayv1.HTTPRoute, gwName, gwNamespace string) bool {
+	for _, parent := range route.Status.Parents {
+		if string(parent.ParentRef.Name) != gwName {
+			continue
+		}
+		ns := route.Namespace
+		if parent.ParentRef.Namespace != nil {
+			ns = string(*parent.ParentRef.Namespace)
+		}
+		if ns != gwNamespace {
+			continue
+		}
+
+		accepted := false
+		resolvedRefs := false
+		for _, cond := range parent.Conditions {
+			if cond.ObservedGeneration < route.Generation {
+				continue
+			}
+			if cond.Type == string(gatewayv1.RouteConditionAccepted) &&
+				cond.Status == metav1.ConditionTrue {
+				accepted = true
+			}
+			if cond.Type == string(gatewayv1.RouteConditionResolvedRefs) &&
+				cond.Status == metav1.ConditionTrue {
+				resolvedRefs = true
+			}
+		}
+		if accepted && resolvedRefs {
+			return true
+		}
+	}
+	return false
+}
+
 // FormatHost brackets IPv6 addresses for use in URL authorities.
 // Hostnames and IPv4 addresses are returned unchanged.
 func FormatHost(host string) string {
