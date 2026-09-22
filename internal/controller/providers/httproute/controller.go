@@ -280,6 +280,9 @@ func (r *Reconciler) deleteStaleHTTPRoute(ctx context.Context, binding *mcpv1alp
 		}
 		return fmt.Errorf("checking for stale HTTPRoute: %w", err)
 	}
+	if !metav1.IsControlledBy(route, binding) {
+		return nil
+	}
 	if err := r.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("deleting stale HTTPRoute: %w", err)
 	}

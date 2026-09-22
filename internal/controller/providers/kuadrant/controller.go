@@ -416,8 +416,10 @@ func (r *Reconciler) deleteStaleResources(ctx context.Context, binding *mcpv1alp
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("checking for stale HTTPRoute: %w", err)
 		}
-	} else if err := r.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("deleting stale HTTPRoute: %w", err)
+	} else if metav1.IsControlledBy(route, binding) {
+		if err := r.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("deleting stale HTTPRoute: %w", err)
+		}
 	}
 
 	reg := &kuadrantapi.MCPServerRegistration{}
@@ -426,8 +428,10 @@ func (r *Reconciler) deleteStaleResources(ctx context.Context, binding *mcpv1alp
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("checking for stale MCPServerRegistration: %w", err)
 		}
-	} else if err := r.Delete(ctx, reg); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("deleting stale MCPServerRegistration: %w", err)
+	} else if metav1.IsControlledBy(reg, binding) {
+		if err := r.Delete(ctx, reg); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("deleting stale MCPServerRegistration: %w", err)
+		}
 	}
 
 	return nil
