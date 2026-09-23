@@ -8,6 +8,7 @@ WORKDIR /workspace
 COPY . .
 
 ENV GOEXPERIMENT=strictfipsruntime
+ENV GOTOOLCHAIN=local
 RUN make -f Makefile-ocp.mk build-ocp GO_BUILD_ENV="GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH}"
 
 FROM --platform=$TARGETPLATFORM registry.redhat.io/ubi9/ubi-minimal-pqc@sha256:8a842ac769de709143e4edeace516f2008dfdc431b64670ad3353fa323b44736
