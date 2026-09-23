@@ -191,7 +191,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	routeHostname := cfg.routeHostname
 	if routeHostname == "" {
 		var resolveErr error
-		routeHostname, resolveErr = r.resolveHostname(ctx, mcpServer.Name, cfg.gwName, cfg.gwNamespace, cfg.sectionName)
+		routeHostname, resolveErr = r.resolveHostname(ctx, mcpServer.Name, mcpServer.Namespace, cfg.gwName, cfg.gwNamespace, cfg.sectionName)
 		if resolveErr != nil {
 			return ctrl.Result{}, r.setNotRegistered(ctx, binding, resolveErr.Error())
 		}
@@ -210,8 +210,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 
-	if !isHTTPRouteAccepted(route, cfg.gwName, cfg.gwNamespace) {
-		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
+	if !providers.IsHTTPRouteAccepted(route, cfg.gwName, cfg.gwNamespace) {
+		statusErr := providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionFalse,
 			reasonRouteNotAccepted, "Waiting for gateway to accept HTTPRoute", "")
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
@@ -226,18 +226,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		if readyCond := meta.FindStatusCondition(reg.Status.Conditions, "Ready"); readyCond != nil {
 			msg = readyCond.Message
 		}
-		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
+		statusErr := providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionFalse,
 			reasonRegistrationNotReady, msg, "")
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
 	}
 
 	ep, resolveErr := r.resolvePublicEndpoint(ctx, cfg)
 	if resolveErr != nil {
-		return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
+		return ctrl.Result{}, providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionFalse,
 			mcpcontroller.ReasonGatewayNotRegistered, resolveErr.Error(), "")
 	}
 	if ep == nil {
-		statusErr := r.updateBindingStatus(ctx, binding, metav1.ConditionFalse,
+		statusErr := providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionFalse,
 			mcpcontroller.ReasonPublicAddressPending,
 			"Waiting for public address: no public-hostname in ConfigMap, no MCPGatewayExtension publicHost, and no public listener hostname available", "")
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, statusErr
@@ -245,7 +245,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	statusURL := fmt.Sprintf("%s://%s%s", ep.scheme, providers.FormatHost(ep.host), cfg.path)
 
-	return ctrl.Result{}, r.updateBindingStatus(ctx, binding, metav1.ConditionTrue,
+	return ctrl.Result{}, providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionTrue,
 		mcpcontroller.ReasonGatewayRegistered, "HTTPRoute accepted and MCPServerRegistration ready", statusURL)
 }
 
@@ -405,7 +405,7 @@ func (r *Reconciler) setNotRegistered(
 	if err := r.deleteStaleResources(ctx, binding); err != nil {
 		return err
 	}
-	return r.updateBindingStatus(ctx, binding, metav1.ConditionFalse, mcpcontroller.ReasonGatewayNotRegistered, message, "")
+	return providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionFalse, mcpcontroller.ReasonGatewayNotRegistered, message, "")
 }
 
 func (r *Reconciler) deleteStaleResources(ctx context.Context, binding *mcpv1alpha1.MCPGatewayBinding) error {
@@ -416,8 +416,10 @@ func (r *Reconciler) deleteStaleResources(ctx context.Context, binding *mcpv1alp
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("checking for stale HTTPRoute: %w", err)
 		}
-	} else if err := r.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("deleting stale HTTPRoute: %w", err)
+	} else if metav1.IsControlledBy(route, binding) {
+		if err := r.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("deleting stale HTTPRoute: %w", err)
+		}
 	}
 
 	reg := &kuadrantapi.MCPServerRegistration{}
@@ -426,17 +428,21 @@ func (r *Reconciler) deleteStaleResources(ctx context.Context, binding *mcpv1alp
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("checking for stale MCPServerRegistration: %w", err)
 		}
-	} else if err := r.Delete(ctx, reg); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("deleting stale MCPServerRegistration: %w", err)
+	} else if metav1.IsControlledBy(reg, binding) {
+		if err := r.Delete(ctx, reg); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("deleting stale MCPServerRegistration: %w", err)
+		}
 	}
 
 	return nil
 }
 
 // resolveHostname constructs the backend hostname from the Gateway listener's
-// wildcard hostname. For example, if the listener hostname is "*.mcp.local" and
-// the MCPServer name is "my-server", the result is "my-server.mcp.local".
-func (r *Reconciler) resolveHostname(ctx context.Context, mcpServerName, gwName, gwNamespace, sectionName string) (string, error) {
+// wildcard hostname. The namespace is included to avoid collisions when
+// multiple namespaces contain MCPServers with the same name. For example,
+// if the listener hostname is "*.mcp.local", the MCPServer name is "my-server"
+// and its namespace is "team-a", the result is "my-server.team-a.mcp.local".
+func (r *Reconciler) resolveHostname(ctx context.Context, mcpServerName, mcpServerNamespace, gwName, gwNamespace, sectionName string) (string, error) {
 	gw := &gatewayv1.Gateway{}
 	if err := r.Get(ctx, client.ObjectKey{Name: gwName, Namespace: gwNamespace}, gw); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -456,7 +462,7 @@ func (r *Reconciler) resolveHostname(ctx context.Context, mcpServerName, gwName,
 		if !strings.HasPrefix(h, "*.") {
 			return "", fmt.Errorf("gateway listener %q hostname %q is not a wildcard; set %q in the ConfigMap", sectionName, h, configKeyRouteHostname)
 		}
-		return mcpServerName + h[1:], nil
+		return fmt.Sprintf("%s.%s%s", mcpServerName, mcpServerNamespace, h[1:]), nil
 	}
 
 	return "", fmt.Errorf("gateway %s/%s has no listener named %q", gwNamespace, gwName, sectionName)
@@ -600,7 +606,7 @@ func (r *Reconciler) schemeFromListener(ctx context.Context, gwName, gwNamespace
 	}
 	for _, listener := range gw.Spec.Listeners {
 		if string(listener.Name) == sectionName {
-			return protocolToScheme(listener.Protocol), nil
+			return providers.ProtocolToScheme(listener.Protocol), nil
 		}
 	}
 	return providers.SchemeHTTP, nil
@@ -638,41 +644,6 @@ func (r *Reconciler) listenerHostname(ctx context.Context, gwName, gwNamespace, 
 		}
 	}
 	return ""
-}
-
-func protocolToScheme(protocol gatewayv1.ProtocolType) string {
-	switch protocol {
-	case gatewayv1.HTTPSProtocolType, gatewayv1.TLSProtocolType:
-		return providers.SchemeHTTPS
-	default:
-		return providers.SchemeHTTP
-	}
-}
-
-func (r *Reconciler) updateBindingStatus(
-	ctx context.Context,
-	binding *mcpv1alpha1.MCPGatewayBinding,
-	status metav1.ConditionStatus,
-	reason, message, url string,
-) error {
-	existing := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
-	if existing != nil && existing.Status == status && existing.Reason == reason &&
-		existing.Message == message && binding.Status.URL == url &&
-		existing.ObservedGeneration == binding.Generation {
-		return nil
-	}
-
-	condition := metav1.Condition{
-		Type:               mcpcontroller.ConditionTypeRegistered,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		ObservedGeneration: binding.Generation,
-	}
-	meta.SetStatusCondition(&binding.Status.Conditions, condition)
-	binding.Status.URL = url
-
-	return r.Status().Update(ctx, binding)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -743,41 +714,6 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 func isRegistrationReady(reg *kuadrantapi.MCPServerRegistration) bool {
 	cond := meta.FindStatusCondition(reg.Status.Conditions, "Ready")
 	return cond != nil && cond.Status == metav1.ConditionTrue
-}
-
-func isHTTPRouteAccepted(route *gatewayv1.HTTPRoute, gwName, gwNamespace string) bool {
-	for _, parent := range route.Status.Parents {
-		if string(parent.ParentRef.Name) != gwName {
-			continue
-		}
-		ns := route.Namespace
-		if parent.ParentRef.Namespace != nil {
-			ns = string(*parent.ParentRef.Namespace)
-		}
-		if ns != gwNamespace {
-			continue
-		}
-
-		accepted := false
-		resolvedRefs := false
-		for _, cond := range parent.Conditions {
-			if cond.ObservedGeneration < route.Generation {
-				continue
-			}
-			if cond.Type == string(gatewayv1.RouteConditionAccepted) &&
-				cond.Status == metav1.ConditionTrue {
-				accepted = true
-			}
-			if cond.Type == string(gatewayv1.RouteConditionResolvedRefs) &&
-				cond.Status == metav1.ConditionTrue {
-				resolvedRefs = true
-			}
-		}
-		if accepted && resolvedRefs {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *Reconciler) findBindingsForConfigMap(ctx context.Context, obj client.Object) []ctrl.Request {

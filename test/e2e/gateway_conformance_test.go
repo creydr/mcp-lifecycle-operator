@@ -22,11 +22,9 @@ import (
 	"context"
 	"net/url"
 	"testing"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
@@ -49,8 +47,19 @@ func TestGatewayConformanceBindingLifecycle(t *testing.T) {
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			prov.ConfigData["section-name"] = f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+
+			configData := map[string]string{
+				"gateway-name":      prov.ConfigData["gateway-name"],
+				"gateway-namespace": prov.ConfigData["gateway-namespace"],
+				"section-name":      listenerName,
+				"route-hostname":    prov.ConfigData["route-hostname"],
+				"public-hostname":   prov.ConfigData["public-hostname"],
+			}
+			if prefix, ok := prov.ConfigData["prefix"]; ok {
+				configData["prefix"] = prefix
+			}
+			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			return f.SetupMCPServer(ctx, t, cfg, "conformance-lifecycle", false,
 				f.WithGateway(prov.Name, configMapName),
 				f.WithPath("/mcp"),
@@ -121,8 +130,19 @@ func TestGatewayConformanceRemoval(t *testing.T) {
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			prov.ConfigData["section-name"] = f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+
+			configData := map[string]string{
+				"gateway-name":      prov.ConfigData["gateway-name"],
+				"gateway-namespace": prov.ConfigData["gateway-namespace"],
+				"section-name":      listenerName,
+				"route-hostname":    prov.ConfigData["route-hostname"],
+				"public-hostname":   prov.ConfigData["public-hostname"],
+			}
+			if prefix, ok := prov.ConfigData["prefix"]; ok {
+				configData["prefix"] = prefix
+			}
+			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "conformance-removal", false,
 				f.WithGateway(prov.Name, configMapName),
 				f.WithPath("/mcp"),
@@ -186,14 +206,28 @@ func TestGatewayConformanceHTTPReachability(t *testing.T) {
 	prov := f.ActiveProvider(t)
 	const configMapName = "gw-reachability-config"
 
+	var gwAddr string
+
 	feature := features.New("Gateway conformance: HTTP reachability").
 		WithLabel(category.Label, category.Networking).
 		WithLabel(speed.Label, speed.Moderate).
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			prov.ConfigData["section-name"] = f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, prov.ConfigData)
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			gwAddr = f.WaitForGatewayAddress(ctx, t, cfg.Client().Resources(), prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"])
+
+			configData := map[string]string{
+				"gateway-name":      prov.ConfigData["gateway-name"],
+				"gateway-namespace": prov.ConfigData["gateway-namespace"],
+				"section-name":      listenerName,
+				"route-hostname":    prov.ConfigData["route-hostname"],
+				"public-hostname":   prov.ConfigData["public-hostname"],
+			}
+			if prefix, ok := prov.ConfigData["prefix"]; ok {
+				configData["prefix"] = prefix
+			}
+			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "conformance-http", true,
 				f.WithGateway(prov.Name, configMapName),
 				f.WithPath("/mcp"),
@@ -221,38 +255,243 @@ func TestGatewayConformanceHTTPReachability(t *testing.T) {
 				t.Fatalf("failed to parse status.address.url %q: %v", server.Status.Address.URL, err)
 			}
 
-			httpClient, proxyURL := f.GatewayProxyHTTPClient(t, cfg, prov.GatewayService, parsed.Path)
-			httpClient = f.WithHostOverride(httpClient, parsed.Hostname())
+			f.AssertMCPReachable(ctx, t, gwAddr, parsed.Hostname(), parsed.Path)
 
-			mcpClient := mcp.NewClient(
-				&mcp.Implementation{
-					Name:    "e2e-gateway-test-client",
-					Version: "v0.0.1",
-				},
-				nil,
+			return ctx
+		}).
+		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			return f.TeardownMCPServer(ctx, t, cfg)
+		}).
+		Feature()
+
+	testenv.Test(t, feature)
+}
+
+func TestGatewayConformanceHostnameSeparation(t *testing.T) {
+	prov := f.ActiveProvider(t)
+	const configMapName = "gw-hostname-sep-config"
+
+	var gwAddr string
+
+	feature := features.New("Gateway conformance: hostname separation").
+		WithLabel(category.Label, category.Networking).
+		WithLabel(speed.Label, speed.Moderate).
+		WithLabel(scope.Label, scope.GatewayConformance).
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			ns := ctx.Value(f.NsKey).(string)
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			gwAddr = f.WaitForGatewayAddress(ctx, t, cfg.Client().Resources(), prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"])
+
+			configData := map[string]string{
+				"gateway-name":      prov.ConfigData["gateway-name"],
+				"gateway-namespace": prov.ConfigData["gateway-namespace"],
+				"section-name":      listenerName,
+				"route-hostname":    "internal.mcp.local",
+				"public-hostname":   "public.example.com",
+			}
+			if prefix, ok := prov.ConfigData["prefix"]; ok {
+				configData["prefix"] = prefix
+			}
+			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
+			ctx = f.SetupMCPServer(ctx, t, cfg, "hostname-sep", true,
+				f.WithGateway(prov.Name, configMapName),
+				f.WithPath("/mcp"),
 			)
 
-			transport := &mcp.StreamableClientTransport{
-				Endpoint:   proxyURL,
-				HTTPClient: httpClient,
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+			f.WaitForMCPServerGatewayAddress(ctx, t, r, server)
+			return ctx
+		}).
+		Assess("status URL uses public-hostname", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+
+			if err := r.Get(ctx, server.Name, server.Namespace, server); err != nil {
+				t.Fatalf("failed to get MCPServer: %v", err)
 			}
 
-			connectCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
+			f.AssertGatewayAddressURL(t, server, "public.example.com", "/mcp")
+			t.Logf("status.address.url correctly uses public-hostname: %s", server.Status.Address.URL)
+			return ctx
+		}).
+		Assess("HTTPRoute uses route-hostname", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
 
-			session, err := mcpClient.Connect(connectCtx, transport, nil)
-			if err != nil {
-				t.Fatalf("failed MCP handshake through gateway: %v", err)
+			bindingName := server.Name + "-gateway-binding"
+			route := &gatewayv1.HTTPRoute{}
+			if err := r.Get(ctx, bindingName, server.Namespace, route); err != nil {
+				t.Fatalf("HTTPRoute not found: %v", err)
 			}
-			defer session.Close()
 
-			initResult := session.InitializeResult()
-			if initResult == nil {
-				t.Fatal("InitializeResult is nil")
+			if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "internal.mcp.local" {
+				t.Fatalf("expected HTTPRoute hostname internal.mcp.local, got %v", route.Spec.Hostnames)
 			}
-			t.Logf("MCP handshake through gateway succeeded: server=%s version=%s",
-				initResult.ServerInfo.Name, initResult.ServerInfo.Version)
+			t.Log("HTTPRoute correctly uses route-hostname: internal.mcp.local")
+			return ctx
+		}).
+		Assess("MCP server is reachable via route hostname", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			f.AssertMCPReachable(ctx, t, gwAddr, "internal.mcp.local", "/mcp")
+			return ctx
+		}).
+		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			return f.TeardownMCPServer(ctx, t, cfg)
+		}).
+		Feature()
 
+	testenv.Test(t, feature)
+}
+
+func TestGatewayConformanceRecoverOnConfigMapUpdate(t *testing.T) {
+	prov := f.ActiveProvider(t)
+	const configMapName = "gw-recover-config"
+
+	feature := features.New("Gateway conformance: recover on ConfigMap update").
+		WithLabel(category.Label, category.Networking).
+		WithLabel(speed.Label, speed.Moderate).
+		WithLabel(scope.Label, scope.GatewayConformance).
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			ns := ctx.Value(f.NsKey).(string)
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+
+			configData := map[string]string{
+				"gateway-name":      "nonexistent-gateway",
+				"gateway-namespace": prov.ConfigData["gateway-namespace"],
+				"section-name":      listenerName,
+				"route-hostname":    "recover.mcp.local",
+				"public-hostname":   "recover.mcp.local",
+			}
+			if prefix, ok := prov.ConfigData["prefix"]; ok {
+				configData["prefix"] = prefix
+			}
+			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
+			ctx = f.SetupMCPServer(ctx, t, cfg, "recover-cfg", false,
+				f.WithGateway(prov.Name, configMapName),
+				f.WithPath("/mcp"),
+			)
+			return ctx
+		}).
+		Assess("GatewayRegistered=False with invalid gateway", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+			f.WaitForMCPServerCondition(ctx, t, r, server, "GatewayRegistered", metav1.ConditionFalse)
+			t.Log("GatewayRegistered=False as expected with invalid gateway reference")
+			return ctx
+		}).
+		Assess("update ConfigMap to valid gateway", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			ns := ctx.Value(f.NsKey).(string)
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			configData := map[string]string{
+				"gateway-name":      prov.ConfigData["gateway-name"],
+				"gateway-namespace": prov.ConfigData["gateway-namespace"],
+				"section-name":      listenerName,
+				"route-hostname":    "recover.mcp.local",
+				"public-hostname":   "recover.mcp.local",
+			}
+			if prefix, ok := prov.ConfigData["prefix"]; ok {
+				configData["prefix"] = prefix
+			}
+			f.UpdateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
+			t.Log("updated ConfigMap to valid gateway reference")
+			return ctx
+		}).
+		Assess("GatewayRegistered recovers to True", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+			f.WaitForMCPServerGatewayAddress(ctx, t, r, server)
+
+			if err := r.Get(ctx, server.Name, server.Namespace, server); err != nil {
+				t.Fatalf("failed to get MCPServer: %v", err)
+			}
+			f.AssertGatewayAddressURL(t, server, "recover.mcp.local", "/mcp")
+			t.Logf("GatewayRegistered recovered to True with address: %s", server.Status.Address.URL)
+			return ctx
+		}).
+		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			return f.TeardownMCPServer(ctx, t, cfg)
+		}).
+		Feature()
+
+	testenv.Test(t, feature)
+}
+
+func TestGatewayConformanceConfigMapUpdateTriggersStatusUpdate(t *testing.T) {
+	prov := f.ActiveProvider(t)
+	const configMapName = "gw-cm-update-config"
+
+	var sectionName string
+
+	feature := features.New("Gateway conformance: ConfigMap update triggers status update").
+		WithLabel(category.Label, category.Networking).
+		WithLabel(speed.Label, speed.Moderate).
+		WithLabel(scope.Label, scope.GatewayConformance).
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			ns := ctx.Value(f.NsKey).(string)
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			sectionName = listenerName
+
+			configData := map[string]string{
+				"gateway-name":      prov.ConfigData["gateway-name"],
+				"gateway-namespace": prov.ConfigData["gateway-namespace"],
+				"section-name":      listenerName,
+				"route-hostname":    "first.mcp.local",
+				"public-hostname":   "first.mcp.local",
+			}
+			if prefix, ok := prov.ConfigData["prefix"]; ok {
+				configData["prefix"] = prefix
+			}
+			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
+			ctx = f.SetupMCPServer(ctx, t, cfg, "cm-update", true,
+				f.WithGateway(prov.Name, configMapName),
+				f.WithPath("/mcp"),
+			)
+
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+			f.WaitForMCPServerGatewayAddress(ctx, t, r, server)
+			return ctx
+		}).
+		Assess("initial status uses first hostname", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+
+			if err := r.Get(ctx, server.Name, server.Namespace, server); err != nil {
+				t.Fatalf("failed to get MCPServer: %v", err)
+			}
+
+			f.AssertGatewayAddressURL(t, server, "first.mcp.local", "/mcp")
+			t.Logf("initial status uses first hostname: %s", server.Status.Address.URL)
+			return ctx
+		}).
+		Assess("update ConfigMap to second hostname", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			ns := ctx.Value(f.NsKey).(string)
+			configData := map[string]string{
+				"gateway-name":      prov.ConfigData["gateway-name"],
+				"gateway-namespace": prov.ConfigData["gateway-namespace"],
+				"section-name":      sectionName,
+				"route-hostname":    "second.mcp.local",
+				"public-hostname":   "second.mcp.local",
+			}
+			if prefix, ok := prov.ConfigData["prefix"]; ok {
+				configData["prefix"] = prefix
+			}
+			f.UpdateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
+			t.Log("updated ConfigMap to second.mcp.local")
+			return ctx
+		}).
+		Assess("status URL updates to second hostname", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+
+			f.WaitForMCPServerAddressContains(ctx, t, r, server, "second.mcp.local")
+
+			if err := r.Get(ctx, server.Name, server.Namespace, server); err != nil {
+				t.Fatalf("failed to get MCPServer: %v", err)
+			}
+
+			f.AssertGatewayAddressURL(t, server, "second.mcp.local", "/mcp")
+			t.Logf("status URL updated to second hostname: %s", server.Status.Address.URL)
 			return ctx
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

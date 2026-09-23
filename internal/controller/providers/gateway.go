@@ -22,9 +22,13 @@ import (
 	"net/netip"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
+	mcpcontroller "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller"
 )
 
 // GatewayAddress returns a public address from the Gateway's status.
@@ -91,7 +95,7 @@ func SchemeFromAcceptedRoute(ctx context.Context, c client.Client, route *gatewa
 		if parent.ParentRef.SectionName != nil {
 			for _, listener := range gw.Spec.Listeners {
 				if listener.Name == *parent.ParentRef.SectionName {
-					return protocolToScheme(listener.Protocol), nil
+					return ProtocolToScheme(listener.Protocol), nil
 				}
 			}
 		}
@@ -117,13 +121,51 @@ func isParentAccepted(parent gatewayv1.RouteParentStatus) bool {
 	return false
 }
 
-func protocolToScheme(protocol gatewayv1.ProtocolType) string {
+func ProtocolToScheme(protocol gatewayv1.ProtocolType) string {
 	switch protocol {
 	case gatewayv1.HTTPSProtocolType, gatewayv1.TLSProtocolType:
 		return SchemeHTTPS
 	default:
 		return SchemeHTTP
 	}
+}
+
+// IsHTTPRouteAccepted checks whether the given HTTPRoute has been accepted by
+// the specified Gateway. It requires both Accepted and ResolvedRefs conditions
+// to be True for the current route generation.
+func IsHTTPRouteAccepted(route *gatewayv1.HTTPRoute, gwName, gwNamespace string) bool {
+	for _, parent := range route.Status.Parents {
+		if string(parent.ParentRef.Name) != gwName {
+			continue
+		}
+		ns := route.Namespace
+		if parent.ParentRef.Namespace != nil {
+			ns = string(*parent.ParentRef.Namespace)
+		}
+		if ns != gwNamespace {
+			continue
+		}
+
+		accepted := false
+		resolvedRefs := false
+		for _, cond := range parent.Conditions {
+			if cond.ObservedGeneration < route.Generation {
+				continue
+			}
+			if cond.Type == string(gatewayv1.RouteConditionAccepted) &&
+				cond.Status == metav1.ConditionTrue {
+				accepted = true
+			}
+			if cond.Type == string(gatewayv1.RouteConditionResolvedRefs) &&
+				cond.Status == metav1.ConditionTrue {
+				resolvedRefs = true
+			}
+		}
+		if accepted && resolvedRefs {
+			return true
+		}
+	}
+	return false
 }
 
 // FormatHost brackets IPv6 addresses for use in URL authorities.
@@ -133,4 +175,33 @@ func FormatHost(host string) string {
 		return "[" + host + "]"
 	}
 	return host
+}
+
+// UpdateBindingStatus sets the Registered condition and URL on a binding's
+// status, skipping the write when nothing has changed.
+func UpdateBindingStatus(
+	ctx context.Context,
+	sw client.StatusWriter,
+	binding *mcpv1alpha1.MCPGatewayBinding,
+	status metav1.ConditionStatus,
+	reason, message, url string,
+) error {
+	existing := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+	if existing != nil && existing.Status == status && existing.Reason == reason &&
+		existing.Message == message && binding.Status.URL == url &&
+		existing.ObservedGeneration == binding.Generation {
+		return nil
+	}
+
+	condition := metav1.Condition{
+		Type:               mcpcontroller.ConditionTypeRegistered,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: binding.Generation,
+	}
+	meta.SetStatusCondition(&binding.Status.Conditions, condition)
+	binding.Status.URL = url
+
+	return sw.Update(ctx, binding)
 }

@@ -42,6 +42,7 @@ import (
 	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 	mcpv1beta1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1beta1"
 	mcpcontroller "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller"
+	gwproviders "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller/providers"
 )
 
 // ContextKey is used to store values in context.
@@ -145,6 +146,31 @@ func WaitForMCPServerGatewayAddress(ctx context.Context, t *testing.T, r *resour
 	if err != nil {
 		t.Fatalf("MCPServer %s/%s: timed out waiting for GatewayRegistered=True and status.address.url to be set: %v",
 			server.Namespace, server.Name, err)
+	}
+}
+
+// WaitForMCPServerAddressContains polls until the MCPServer's status.address.url
+// contains the given substring. Useful for waiting on a ConfigMap change to
+// propagate through reconciliation.
+func WaitForMCPServerAddressContains(ctx context.Context, t *testing.T, r *resources.Resources,
+	server *mcpv1beta1.MCPServer, substring string, timeout ...time.Duration) {
+	t.Helper()
+	d := 3 * time.Minute
+	if len(timeout) > 0 {
+		d = timeout[0]
+	}
+	err := wait.For(
+		conditions.New(r).ResourceMatch(server, func(obj k8s.Object) bool {
+			s := obj.(*mcpv1beta1.MCPServer)
+			return s.Status.Address != nil && strings.Contains(s.Status.Address.URL, substring)
+		}),
+		wait.WithContext(ctx),
+		wait.WithTimeout(d),
+		wait.WithInterval(2*time.Second),
+	)
+	if err != nil {
+		t.Fatalf("MCPServer %s/%s: timed out waiting for status.address.url to contain %q: %v",
+			server.Namespace, server.Name, substring, err)
 	}
 }
 
@@ -407,13 +433,50 @@ func CreateGatewayConfigMap(ctx context.Context, t *testing.T, cfg *envconf.Conf
 	t.Logf("created gateway ConfigMap %s/%s", namespace, name)
 }
 
+// UpdateGatewayConfigMap updates an existing gateway ConfigMap's data using
+// a read-modify-write loop with automatic retry on conflict.
+func UpdateGatewayConfigMap(ctx context.Context, t *testing.T, cfg *envconf.Config,
+	name, namespace string, data map[string]string) {
+	t.Helper()
+	r := cfg.Client().Resources()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+	UpdateWithRetry(ctx, t, r, cm, func(c *corev1.ConfigMap) {
+		c.Data = data
+	})
+	t.Logf("updated gateway ConfigMap %s/%s", namespace, name)
+}
+
 const defaultListenerName = "http"
+
+// WaitForGatewayAddress polls until the Gateway has a LoadBalancer address,
+// using the same address-type preference as the controller.
+func WaitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resources, name, namespace string) string {
+	t.Helper()
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		addr, err := gwproviders.GatewayAddress(ctx, r.GetControllerRuntimeClient(), name, namespace)
+		if err != nil {
+			t.Fatalf("failed to read Gateway %s/%s: %v", namespace, name, err)
+		}
+		if addr != "" {
+			return addr
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for Gateway %s/%s to receive a LoadBalancer address", namespace, name)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
 
 // EnsureGateway creates a GatewayClass, namespace, and Gateway resource if they don't
 // already exist. The Gateway allows routes from all namespaces so that HTTPRoutes
 // created in per-test namespaces are accepted by the gateway controller.
-// It returns the listener name of the actual Gateway on the cluster so that
-// callers can align their section-name config with the deployed Gateway.
+// It returns the listener name. Use WaitForGatewayAddress to obtain the LB address.
 func EnsureGateway(ctx context.Context, t *testing.T, cfg *envconf.Config,
 	name, namespace, gatewayClassName string) string {
 	t.Helper()
@@ -468,6 +531,7 @@ func EnsureGateway(ctx context.Context, t *testing.T, cfg *envconf.Config,
 	if len(existing.Spec.Listeners) > 0 {
 		listenerName = string(existing.Spec.Listeners[0].Name)
 	}
+
 	t.Logf("ensured Gateway %s/%s (class=%s, listener=%s)", namespace, name, gatewayClassName, listenerName)
 	return listenerName
 }

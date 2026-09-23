@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -517,7 +518,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		route := &gatewayv1.HTTPRoute{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
 		Expect(route.Spec.Hostnames).To(HaveLen(1))
-		Expect(string(route.Spec.Hostnames[0])).To(Equal(mcpServerName + ".mcp.local"))
+		Expect(string(route.Spec.Hostnames[0])).To(Equal(mcpServerName + "." + testNamespace + ".mcp.local"))
 	})
 
 	It("should set Registered=False when hostname omitted and listener has no wildcard", func() {
@@ -1601,6 +1602,58 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
 		Expect(registered.Message).To(ContainSubstring("not found"))
+	})
+
+	It("should not delete stale resources owned by a different controller", func() {
+		createMCPServer()
+		createBinding()
+
+		foreignOwner := metav1.OwnerReference{
+			APIVersion: "v1",
+			Kind:       "ConfigMap",
+			Name:       "foreign-owner",
+			UID:        "foreign-uid",
+			Controller: ptr.To(true), //nolint:modernize // new(bool) yields false, not true
+		}
+
+		foreignRoute := &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            bindingName,
+				Namespace:       testNamespace,
+				OwnerReferences: []metav1.OwnerReference{foreignOwner},
+			},
+			Spec: gatewayv1.HTTPRouteSpec{},
+		}
+		Expect(k8sClient.Create(ctx, foreignRoute)).To(Succeed())
+
+		foreignReg := &kuadrantapi.MCPServerRegistration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            bindingName,
+				Namespace:       testNamespace,
+				OwnerReferences: []metav1.OwnerReference{foreignOwner},
+			},
+			Spec: kuadrantapi.MCPServerRegistrationSpec{
+				TargetRef: kuadrantapi.TargetReference{Group: "gateway.networking.k8s.io", Kind: "HTTPRoute", Name: bindingName},
+				Path:      "/mcp",
+				Prefix:    "pfx_",
+				State:     "Enabled",
+			},
+		}
+		foreignReg.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPServerRegistration"))
+		Expect(k8sClient.Create(ctx, foreignReg)).To(Succeed())
+
+		By("reconciling without a ConfigMap to trigger setNotRegistered")
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying the foreign-owned resources were NOT deleted")
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		Expect(metav1.GetControllerOf(route).Name).To(Equal("foreign-owner"))
+
+		reg := &kuadrantapi.MCPServerRegistration{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
+		Expect(metav1.GetControllerOf(reg).Name).To(Equal("foreign-owner"))
 	})
 
 	It("should restore ownerReference when stripped but spec unchanged", func() {

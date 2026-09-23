@@ -28,6 +28,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	mcpv1alpha1 "github.com/kubernetes-sigs/mcp-lifecycle-operator/api/v1alpha1"
 )
 
 func acceptedCondition() metav1.Condition {
@@ -424,6 +426,221 @@ func TestFormatHost(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsHTTPRouteAccepted(t *testing.T) {
+	ns := gatewayv1.Namespace("default")
+
+	resolvedRefsTrue := metav1.Condition{
+		Type:               string(gatewayv1.RouteConditionResolvedRefs),
+		Status:             metav1.ConditionTrue,
+		Reason:             "ResolvedRefs",
+		LastTransitionTime: metav1.Now(),
+	}
+
+	tests := []struct {
+		name        string
+		route       *gatewayv1.HTTPRoute
+		gwName      string
+		gwNamespace string
+		want        bool
+	}{
+		{
+			name: "accepted and resolved refs",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default", Generation: 1},
+				Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{{
+						ParentRef: gatewayv1.ParentReference{Name: "gw", Namespace: &ns},
+						Conditions: []metav1.Condition{
+							{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+							{Type: string(gatewayv1.RouteConditionResolvedRefs), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+						},
+					}},
+				}},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: true,
+		},
+		{
+			name: "accepted but refs not resolved",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default", Generation: 1},
+				Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{{
+						ParentRef: gatewayv1.ParentReference{Name: "gw", Namespace: &ns},
+						Conditions: []metav1.Condition{
+							{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+						},
+					}},
+				}},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: false,
+		},
+		{
+			name: "not accepted",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default", Generation: 1},
+				Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{{
+						ParentRef: gatewayv1.ParentReference{Name: "gw", Namespace: &ns},
+						Conditions: []metav1.Condition{
+							{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionFalse, ObservedGeneration: 1},
+							resolvedRefsTrue,
+						},
+					}},
+				}},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: false,
+		},
+		{
+			name: "stale generation ignored",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default", Generation: 2},
+				Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{{
+						ParentRef: gatewayv1.ParentReference{Name: "gw", Namespace: &ns},
+						Conditions: []metav1.Condition{
+							{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+							{Type: string(gatewayv1.RouteConditionResolvedRefs), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+						},
+					}},
+				}},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: false,
+		},
+		{
+			name: "different gateway name",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default", Generation: 1},
+				Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{{
+						ParentRef: gatewayv1.ParentReference{Name: "other-gw", Namespace: &ns},
+						Conditions: []metav1.Condition{
+							{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+							{Type: string(gatewayv1.RouteConditionResolvedRefs), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+						},
+					}},
+				}},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: false,
+		},
+		{
+			name: "different gateway namespace",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default", Generation: 1},
+				Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{{
+						ParentRef: gatewayv1.ParentReference{Name: "gw", Namespace: namespacePtr("other-ns")},
+						Conditions: []metav1.Condition{
+							{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+							{Type: string(gatewayv1.RouteConditionResolvedRefs), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+						},
+					}},
+				}},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: false,
+		},
+		{
+			name: "no parents",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default"},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: false,
+		},
+		{
+			name: "nil namespace defaults to route namespace",
+			route: &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "default", Generation: 1},
+				Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{
+					Parents: []gatewayv1.RouteParentStatus{{
+						ParentRef: gatewayv1.ParentReference{Name: "gw"},
+						Conditions: []metav1.Condition{
+							{Type: string(gatewayv1.RouteConditionAccepted), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+							{Type: string(gatewayv1.RouteConditionResolvedRefs), Status: metav1.ConditionTrue, ObservedGeneration: 1},
+						},
+					}},
+				}},
+			},
+			gwName: "gw", gwNamespace: "default",
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsHTTPRouteAccepted(tt.route, tt.gwName, tt.gwNamespace)
+			if got != tt.want {
+				t.Errorf("IsHTTPRouteAccepted() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUpdateBindingStatus(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := mcpv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("sets condition and URL", func(t *testing.T) {
+		binding := &mcpv1alpha1.MCPGatewayBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: "default", Generation: 1},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(binding).WithObjects(binding).Build()
+
+		err := UpdateBindingStatus(context.Background(), c.Status(), binding, metav1.ConditionTrue, "Ready", "all good", "http://example.com/mcp")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if binding.Status.URL != "http://example.com/mcp" {
+			t.Errorf("URL = %q, want %q", binding.Status.URL, "http://example.com/mcp")
+		}
+		if len(binding.Status.Conditions) != 1 {
+			t.Fatalf("expected 1 condition, got %d", len(binding.Status.Conditions))
+		}
+		cond := binding.Status.Conditions[0]
+		if cond.Status != metav1.ConditionTrue || cond.Reason != "Ready" {
+			t.Errorf("condition = %v/%v, want True/Ready", cond.Status, cond.Reason)
+		}
+	})
+
+	t.Run("skips update when unchanged", func(t *testing.T) {
+		binding := &mcpv1alpha1.MCPGatewayBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: "default", Generation: 1},
+			Status: mcpv1alpha1.MCPGatewayBindingStatus{
+				URL: "http://example.com/mcp",
+				Conditions: []metav1.Condition{{
+					Type:               "Registered",
+					Status:             metav1.ConditionTrue,
+					Reason:             "Ready",
+					Message:            "all good",
+					ObservedGeneration: 1,
+				}},
+			},
+		}
+		calls := 0
+		c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(binding).WithObjects(binding).
+			WithInterceptorFuncs(interceptor.Funcs{
+				SubResourceUpdate: func(ctx context.Context, client client.Client, subResourceName string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+					calls++
+					return client.Status().Update(ctx, obj, opts...)
+				},
+			}).Build()
+
+		err := UpdateBindingStatus(context.Background(), c.Status(), binding, metav1.ConditionTrue, "Ready", "all good", "http://example.com/mcp")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if calls != 0 {
+			t.Errorf("expected 0 status updates (no-op), got %d", calls)
+		}
+	})
 }
 
 func sectionNamePtr(s string) *gatewayv1.SectionName {

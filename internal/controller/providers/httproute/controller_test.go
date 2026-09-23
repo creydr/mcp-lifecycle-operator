@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -641,6 +642,41 @@ var _ = Describe("HTTPRoute Provider Controller", func() {
 		By("verifying the HTTPRoute was cleaned up")
 		err = k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)
 		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "stale HTTPRoute should be deleted")
+	})
+
+	It("should not delete stale HTTPRoute owned by a different controller", func() {
+		createMCPServer()
+		createBinding(ProviderName)
+
+		foreignRoute := &gatewayv1.HTTPRoute{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      bindingName,
+				Namespace: testNamespace,
+				OwnerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "v1",
+						Kind:       "ConfigMap",
+						Name:       "foreign-owner",
+						UID:        "foreign-uid",
+						Controller: ptr.To(true), //nolint:modernize // new(bool) yields false, not true
+					},
+				},
+			},
+			Spec: gatewayv1.HTTPRouteSpec{},
+		}
+		Expect(k8sClient.Create(ctx, foreignRoute)).To(Succeed())
+
+		By("reconciling without a ConfigMap to trigger setNotRegistered")
+		r := newReconciler()
+		_, err := r.Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: bindingName, Namespace: testNamespace},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying the foreign-owned HTTPRoute was NOT deleted")
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		Expect(metav1.GetControllerOf(route).Name).To(Equal("foreign-owner"))
 	})
 
 	Describe("findBindingsForConfigMap", func() {

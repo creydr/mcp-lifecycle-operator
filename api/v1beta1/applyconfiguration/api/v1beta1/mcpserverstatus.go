@@ -65,6 +65,7 @@ type MCPServerStatusApplyConfiguration struct {
 	// not enumerated here to avoid drift; specific failure details
 	// (ImagePullBackOff, OOMKilled, CrashLoop, etc.) are reported in the message,
 	// not the reason.
+	//
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 
