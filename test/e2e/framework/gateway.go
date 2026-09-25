@@ -67,12 +67,13 @@ var providers = map[string]ProviderConfig{
 	"kuadrant": {
 		Name: "kuadrant",
 		ConfigData: map[string]string{
-			"gateway-name":      "mcp-gateway",
-			"gateway-namespace": "gateway-system",
-			"gateway-class":     "istio",
-			"route-hostname":    "mcp.e2e.test",
-			"public-hostname":   "mcp.e2e.test",
-			"prefix":            "e2e_",
+			"gateway-name":        "mcp-gateway",
+			"gateway-namespace":   "gateway-system",
+			"gateway-class":       "istio",
+			"route-hostname":      "mcp.e2e.test",
+			"extension-name":      "e2e-extension",
+			"extension-namespace": "gateway-system",
+			"prefix":              "e2e_",
 		},
 	},
 }
@@ -190,6 +191,65 @@ func CreateMCPGatewayExtension(ctx context.Context, t *testing.T, cfg *envconf.C
 	})
 
 	return ext
+}
+
+// SetExtensionReady sets the Ready=True condition on an MCPGatewayExtension's
+// status. The controller checks this before proceeding with reconciliation.
+func SetExtensionReady(ctx context.Context, t *testing.T, cfg *envconf.Config, name, namespace string) {
+	t.Helper()
+	ext := &kuadrantapi.MCPGatewayExtension{}
+	r := cfg.Client().Resources()
+	if err := r.Get(ctx, name, namespace, ext); err != nil {
+		t.Fatalf("failed to get MCPGatewayExtension %s/%s: %v", namespace, name, err)
+	}
+	ext.Status.Conditions = []metav1.Condition{
+		{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			Reason:             "Ready",
+			LastTransitionTime: metav1.Now(),
+		},
+	}
+	if err := cfg.Client().Resources().GetControllerRuntimeClient().Status().Update(ctx, ext); err != nil {
+		t.Fatalf("failed to set MCPGatewayExtension %s/%s ready: %v", namespace, name, err)
+	}
+	t.Logf("set MCPGatewayExtension %s/%s ready", namespace, name)
+}
+
+// BuildControllerConfigData builds the ConfigMap data that the controller reads
+// based on the provider type. Kuadrant uses extension-based keys while httproute
+// uses gateway-name/gateway-namespace.
+func BuildControllerConfigData(prov ProviderConfig, sectionName string) map[string]string {
+	switch prov.Name {
+	case "kuadrant":
+		data := map[string]string{
+			"extension-name":      prov.ConfigData["extension-name"],
+			"extension-namespace": prov.ConfigData["extension-namespace"],
+			"prefix":              prov.ConfigData["prefix"],
+		}
+		if sectionName != "" {
+			data["section-name"] = sectionName
+		}
+		if rh, ok := prov.ConfigData["route-hostname"]; ok {
+			data["route-hostname"] = rh
+		}
+		return data
+	default:
+		data := map[string]string{
+			"gateway-name":      prov.ConfigData["gateway-name"],
+			"gateway-namespace": prov.ConfigData["gateway-namespace"],
+		}
+		if sectionName != "" {
+			data["section-name"] = sectionName
+		}
+		if rh, ok := prov.ConfigData["route-hostname"]; ok {
+			data["route-hostname"] = rh
+		}
+		if ph, ok := prov.ConfigData["public-hostname"]; ok {
+			data["public-hostname"] = ph
+		}
+		return data
+	}
 }
 
 // ListenerSpec describes a Gateway listener for EnsureMultiListenerGateway.
