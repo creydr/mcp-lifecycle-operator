@@ -123,7 +123,12 @@ func (in *MCPServerRegistrationList) DeepCopyInto(out *MCPServerRegistrationList
 type MCPGatewayExtension struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              MCPGatewayExtensionSpec `json:"spec"`
+	Spec              MCPGatewayExtensionSpec   `json:"spec"`
+	Status            MCPGatewayExtensionStatus `json:"status,omitempty"`
+}
+
+type MCPGatewayExtensionStatus struct {
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 type MCPGatewayExtensionSpec struct {
@@ -151,6 +156,12 @@ func (in *MCPGatewayExtension) DeepCopyInto(out *MCPGatewayExtension) {
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	out.Spec = in.Spec
+	if in.Status.Conditions != nil {
+		out.Status.Conditions = make([]metav1.Condition, len(in.Status.Conditions))
+		for i := range in.Status.Conditions {
+			in.Status.Conditions[i].DeepCopyInto(&out.Status.Conditions[i])
+		}
+	}
 }
 
 func (in *MCPGatewayExtensionList) DeepCopyObject() runtime.Object {
