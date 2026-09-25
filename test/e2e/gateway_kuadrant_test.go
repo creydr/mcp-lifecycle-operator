@@ -64,12 +64,7 @@ func TestKuadrantProviderResources(t *testing.T) {
 			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
 
-			f.CreateMCPGatewayExtension(ctx, t, cfg,
-				prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"],
-				prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"],
-				f.WithSectionName(listenerName),
-			)
-			f.SetExtensionReady(ctx, t, cfg, prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"])
+			f.WaitForExtensionReady(ctx, t, cfg, prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"])
 
 			configData := f.BuildControllerConfigData(prov, listenerName)
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
@@ -175,7 +170,7 @@ func TestKuadrantAutoConstructedHostname(t *testing.T) {
 				"kuadrant-wildcard-gw", prov.ConfigData["gateway-namespace"],
 				f.WithSectionName("mcps"),
 			)
-			f.SetExtensionReady(ctx, t, cfg, "auto-host-ext", ns)
+			f.WaitForExtensionReady(ctx, t, cfg, "auto-host-ext", ns)
 
 			configData := map[string]string{
 				"extension-name":      "auto-host-ext",
@@ -251,7 +246,7 @@ func TestKuadrantDefaultSectionName(t *testing.T) {
 				f.WithPublicHost("default-sec.public.example.com"),
 				f.WithSectionName("mcps"),
 			)
-			f.SetExtensionReady(ctx, t, cfg, "default-ext", ns)
+			f.WaitForExtensionReady(ctx, t, cfg, "default-ext", ns)
 
 			configData := map[string]string{
 				"extension-name":      "default-ext",
@@ -306,20 +301,23 @@ func TestKuadrantPublicHostnamePriority(t *testing.T) {
 			ns := ctx.Value(f.NsKey).(string)
 			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
 
-			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			f.EnsureMultiListenerGateway(ctx, t, cfg,
+				"kuadrant-priority-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+				[]f.ListenerSpec{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
+			)
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"priority-ext", ns,
-				prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"],
+				"kuadrant-priority-gw", prov.ConfigData["gateway-namespace"],
 				f.WithPublicHost("extension.example.com"),
-				f.WithSectionName(listenerName),
+				f.WithSectionName("http"),
 			)
-			f.SetExtensionReady(ctx, t, cfg, "priority-ext", ns)
+			f.WaitForExtensionReady(ctx, t, cfg, "priority-ext", ns)
 
 			configData := map[string]string{
 				"extension-name":      "priority-ext",
 				"extension-namespace": ns,
-				"section-name":        listenerName,
+				"section-name":        "http",
 				"route-hostname":      "route.mcp.local",
 				"prefix":              prov.ConfigData["prefix"],
 			}
@@ -383,7 +381,7 @@ func TestKuadrantExtensionFallback(t *testing.T) {
 				f.WithPublicHost("public.example.com"),
 				f.WithSectionName("mcp"),
 			)
-			f.SetExtensionReady(ctx, t, cfg, "fallback-ext", ns)
+			f.WaitForExtensionReady(ctx, t, cfg, "fallback-ext", ns)
 
 			configData := map[string]string{
 				"extension-name":      "fallback-ext",
@@ -481,7 +479,7 @@ func TestKuadrantExtensionNotReady(t *testing.T) {
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"notready-ext", ns,
-				prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"],
+				"nonexistent-gateway", prov.ConfigData["gateway-namespace"],
 				f.WithPublicHost("notready.example.com"),
 			)
 
@@ -539,7 +537,7 @@ func TestKuadrantCrossNamespaceExtension(t *testing.T) {
 				f.WithPublicHost("cross-ns.example.com"),
 				f.WithSectionName("mcp"),
 			)
-			f.SetExtensionReady(ctx, t, cfg, "cross-ns-ext", ns)
+			f.WaitForExtensionReady(ctx, t, cfg, "cross-ns-ext", ns)
 
 			configData := map[string]string{
 				"extension-name":      "cross-ns-ext",
@@ -606,7 +604,7 @@ func TestKuadrantListenerHostnameFallback(t *testing.T) {
 				"kuadrant-listener-fallback-gw", prov.ConfigData["gateway-namespace"],
 				f.WithSectionName("mcp"),
 			)
-			f.SetExtensionReady(ctx, t, cfg, "listener-ext", ns)
+			f.WaitForExtensionReady(ctx, t, cfg, "listener-ext", ns)
 
 			configData := map[string]string{
 				"extension-name":      "listener-ext",

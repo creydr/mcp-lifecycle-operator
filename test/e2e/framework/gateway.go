@@ -71,8 +71,8 @@ var providers = map[string]ProviderConfig{
 			"gateway-namespace":   "gateway-system",
 			"gateway-class":       "istio",
 			"route-hostname":      "mcp.e2e.test",
-			"extension-name":      "e2e-extension",
-			"extension-namespace": "gateway-system",
+			"extension-name":      "mcp-gateway-extension",
+			"extension-namespace": "mcp-system",
 			"prefix":              "e2e_",
 		},
 	},
@@ -193,27 +193,28 @@ func CreateMCPGatewayExtension(ctx context.Context, t *testing.T, cfg *envconf.C
 	return ext
 }
 
-// SetExtensionReady sets the Ready=True condition on an MCPGatewayExtension's
-// status. The controller checks this before proceeding with reconciliation.
-func SetExtensionReady(ctx context.Context, t *testing.T, cfg *envconf.Config, name, namespace string) {
+// WaitForExtensionReady polls until the MCPGatewayExtension has Ready=True,
+// which is set by the mcp-gateway controller.
+func WaitForExtensionReady(ctx context.Context, t *testing.T, cfg *envconf.Config, name, namespace string) {
 	t.Helper()
-	ext := &kuadrantapi.MCPGatewayExtension{}
 	r := cfg.Client().Resources()
-	if err := r.Get(ctx, name, namespace, ext); err != nil {
-		t.Fatalf("failed to get MCPGatewayExtension %s/%s: %v", namespace, name, err)
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		ext := &kuadrantapi.MCPGatewayExtension{}
+		if err := r.Get(ctx, name, namespace, ext); err != nil {
+			t.Fatalf("failed to get MCPGatewayExtension %s/%s: %v", namespace, name, err)
+		}
+		for _, c := range ext.Status.Conditions {
+			if c.Type == "Ready" && c.Status == metav1.ConditionTrue {
+				t.Logf("MCPGatewayExtension %s/%s is ready", namespace, name)
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for MCPGatewayExtension %s/%s to become ready", namespace, name)
+		}
+		time.Sleep(2 * time.Second)
 	}
-	ext.Status.Conditions = []metav1.Condition{
-		{
-			Type:               "Ready",
-			Status:             metav1.ConditionTrue,
-			Reason:             "Ready",
-			LastTransitionTime: metav1.Now(),
-		},
-	}
-	if err := cfg.Client().Resources().GetControllerRuntimeClient().Status().Update(ctx, ext); err != nil {
-		t.Fatalf("failed to set MCPGatewayExtension %s/%s ready: %v", namespace, name, err)
-	}
-	t.Logf("set MCPGatewayExtension %s/%s ready", namespace, name)
 }
 
 // BuildControllerConfigData builds the ConfigMap data that the controller reads

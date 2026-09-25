@@ -51,21 +51,14 @@ func ensureConformanceKuadrantScheme(t *testing.T, scheme *runtime.Scheme) {
 	})
 }
 
-func setupKuadrantExtension(ctx context.Context, t *testing.T, cfg *envconf.Config, prov f.ProviderConfig, ns string, opts ...f.MCPGatewayExtensionOption) {
+func setupKuadrantExtension(ctx context.Context, t *testing.T, cfg *envconf.Config, prov f.ProviderConfig, ns string) {
 	t.Helper()
 	if prov.Name != "kuadrant" {
 		return
 	}
 	ensureConformanceKuadrantScheme(t, cfg.Client().Resources().GetScheme())
 	f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
-	extName := prov.ConfigData["extension-name"]
-	extNS := prov.ConfigData["extension-namespace"]
-	f.CreateMCPGatewayExtension(ctx, t, cfg,
-		extName, extNS,
-		prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"],
-		opts...,
-	)
-	f.SetExtensionReady(ctx, t, cfg, extName, extNS)
+	f.WaitForExtensionReady(ctx, t, cfg, prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"])
 }
 
 func TestGatewayConformanceBindingLifecycle(t *testing.T) {
@@ -80,7 +73,7 @@ func TestGatewayConformanceBindingLifecycle(t *testing.T) {
 			ns := ctx.Value(f.NsKey).(string)
 			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 
-			setupKuadrantExtension(ctx, t, cfg, prov, ns, f.WithSectionName(listenerName))
+			setupKuadrantExtension(ctx, t, cfg, prov, ns)
 			configData := f.BuildControllerConfigData(prov, listenerName)
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			return f.SetupMCPServer(ctx, t, cfg, "conformance-lifecycle", false,
@@ -155,7 +148,7 @@ func TestGatewayConformanceRemoval(t *testing.T) {
 			ns := ctx.Value(f.NsKey).(string)
 			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 
-			setupKuadrantExtension(ctx, t, cfg, prov, ns, f.WithSectionName(listenerName))
+			setupKuadrantExtension(ctx, t, cfg, prov, ns)
 			configData := f.BuildControllerConfigData(prov, listenerName)
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "conformance-removal", false,
@@ -232,7 +225,7 @@ func TestGatewayConformanceHTTPReachability(t *testing.T) {
 			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 			gwAddr = f.WaitForGatewayAddress(ctx, t, cfg.Client().Resources(), prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"])
 
-			setupKuadrantExtension(ctx, t, cfg, prov, ns, f.WithSectionName(listenerName))
+			setupKuadrantExtension(ctx, t, cfg, prov, ns)
 			configData := f.BuildControllerConfigData(prov, listenerName)
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "conformance-http", true,
@@ -286,29 +279,33 @@ func TestGatewayConformanceHostnameSeparation(t *testing.T) {
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			gwAddr = f.WaitForGatewayAddress(ctx, t, cfg.Client().Resources(), prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"])
 
 			var configData map[string]string
 			switch prov.Name {
 			case "kuadrant":
 				ensureConformanceKuadrantScheme(t, cfg.Client().Resources().GetScheme())
 				f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
-				f.CreateMCPGatewayExtension(ctx, t, cfg,
-					prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"],
-					prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"],
-					f.WithPublicHost("public.example.com"),
-					f.WithSectionName(listenerName),
+				gwAddr = f.EnsureMultiListenerGateway(ctx, t, cfg,
+					"hostname-sep-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+					[]f.ListenerSpec{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
 				)
-				f.SetExtensionReady(ctx, t, cfg, prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"])
+				f.CreateMCPGatewayExtension(ctx, t, cfg,
+					"hostname-sep-ext", ns,
+					"hostname-sep-gw", prov.ConfigData["gateway-namespace"],
+					f.WithPublicHost("public.example.com"),
+					f.WithSectionName("http"),
+				)
+				f.WaitForExtensionReady(ctx, t, cfg, "hostname-sep-ext", ns)
 				configData = map[string]string{
-					"extension-name":      prov.ConfigData["extension-name"],
-					"extension-namespace": prov.ConfigData["extension-namespace"],
-					"section-name":        listenerName,
+					"extension-name":      "hostname-sep-ext",
+					"extension-namespace": ns,
+					"section-name":        "http",
 					"route-hostname":      "internal.mcp.local",
 					"prefix":              prov.ConfigData["prefix"],
 				}
 			default:
+				listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+				gwAddr = f.WaitForGatewayAddress(ctx, t, cfg.Client().Resources(), prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"])
 				configData = map[string]string{
 					"gateway-name":      prov.ConfigData["gateway-name"],
 					"gateway-namespace": prov.ConfigData["gateway-namespace"],
@@ -416,27 +413,31 @@ func TestGatewayConformanceRecoverOnConfigMapUpdate(t *testing.T) {
 		}).
 		Assess("update ConfigMap to valid gateway", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 
 			var configData map[string]string
 			switch prov.Name {
 			case "kuadrant":
 				f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
-				f.CreateMCPGatewayExtension(ctx, t, cfg,
-					prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"],
-					prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"],
-					f.WithPublicHost("recover.mcp.local"),
-					f.WithSectionName(listenerName),
+				f.EnsureMultiListenerGateway(ctx, t, cfg,
+					"recover-cfg-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+					[]f.ListenerSpec{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
 				)
-				f.SetExtensionReady(ctx, t, cfg, prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"])
+				f.CreateMCPGatewayExtension(ctx, t, cfg,
+					"recover-cfg-ext", ns,
+					"recover-cfg-gw", prov.ConfigData["gateway-namespace"],
+					f.WithPublicHost("recover.mcp.local"),
+					f.WithSectionName("http"),
+				)
+				f.WaitForExtensionReady(ctx, t, cfg, "recover-cfg-ext", ns)
 				configData = map[string]string{
-					"extension-name":      prov.ConfigData["extension-name"],
-					"extension-namespace": prov.ConfigData["extension-namespace"],
-					"section-name":        listenerName,
+					"extension-name":      "recover-cfg-ext",
+					"extension-namespace": ns,
+					"section-name":        "http",
 					"route-hostname":      "recover.mcp.local",
 					"prefix":              prov.ConfigData["prefix"],
 				}
 			default:
+				listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 				configData = map[string]string{
 					"gateway-name":      prov.ConfigData["gateway-name"],
 					"gateway-namespace": prov.ConfigData["gateway-namespace"],
@@ -474,6 +475,7 @@ func TestGatewayConformanceConfigMapUpdateTriggersStatusUpdate(t *testing.T) {
 	const configMapName = "gw-cm-update-config"
 
 	var sectionName string
+	var extName, extNs string
 
 	feature := features.New("Gateway conformance: ConfigMap update triggers status update").
 		WithLabel(category.Label, category.Networking).
@@ -481,29 +483,36 @@ func TestGatewayConformanceConfigMapUpdateTriggersStatusUpdate(t *testing.T) {
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			sectionName = listenerName
 
 			var configData map[string]string
 			switch prov.Name {
 			case "kuadrant":
 				ensureConformanceKuadrantScheme(t, cfg.Client().Resources().GetScheme())
 				f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
-				f.CreateMCPGatewayExtension(ctx, t, cfg,
-					prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"],
-					prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"],
-					f.WithPublicHost("first.mcp.local"),
-					f.WithSectionName(listenerName),
+				f.EnsureMultiListenerGateway(ctx, t, cfg,
+					"cfg-update-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+					[]f.ListenerSpec{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
 				)
-				f.SetExtensionReady(ctx, t, cfg, prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"])
+				sectionName = "http"
+				extName = "cfg-update-ext"
+				extNs = ns
+				f.CreateMCPGatewayExtension(ctx, t, cfg,
+					extName, extNs,
+					"cfg-update-gw", prov.ConfigData["gateway-namespace"],
+					f.WithPublicHost("first.mcp.local"),
+					f.WithSectionName("http"),
+				)
+				f.WaitForExtensionReady(ctx, t, cfg, extName, extNs)
 				configData = map[string]string{
-					"extension-name":      prov.ConfigData["extension-name"],
-					"extension-namespace": prov.ConfigData["extension-namespace"],
-					"section-name":        listenerName,
+					"extension-name":      extName,
+					"extension-namespace": extNs,
+					"section-name":        "http",
 					"route-hostname":      "first.mcp.local",
 					"prefix":              prov.ConfigData["prefix"],
 				}
 			default:
+				listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+				sectionName = listenerName
 				configData = map[string]string{
 					"gateway-name":      prov.ConfigData["gateway-name"],
 					"gateway-namespace": prov.ConfigData["gateway-namespace"],
@@ -541,8 +550,8 @@ func TestGatewayConformanceConfigMapUpdateTriggersStatusUpdate(t *testing.T) {
 			switch prov.Name {
 			case "kuadrant":
 				configData = map[string]string{
-					"extension-name":      prov.ConfigData["extension-name"],
-					"extension-namespace": prov.ConfigData["extension-namespace"],
+					"extension-name":      extName,
+					"extension-namespace": extNs,
 					"section-name":        sectionName,
 					"route-hostname":      "second.mcp.local",
 					"prefix":              prov.ConfigData["prefix"],
