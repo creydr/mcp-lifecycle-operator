@@ -481,6 +481,7 @@ func TestKuadrantExtensionNotReady(t *testing.T) {
 				"notready-ext", ns,
 				"nonexistent-gateway", prov.ConfigData["gateway-namespace"],
 				f.WithPublicHost("notready.example.com"),
+				f.WithSectionName("mcp"),
 			)
 
 			configData := map[string]string{

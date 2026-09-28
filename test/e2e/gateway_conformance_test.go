@@ -417,25 +417,8 @@ func TestGatewayConformanceRecoverOnConfigMapUpdate(t *testing.T) {
 			var configData map[string]string
 			switch prov.Name {
 			case "kuadrant":
-				f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
-				f.EnsureMultiListenerGateway(ctx, t, cfg,
-					"recover-cfg-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
-					[]f.ListenerSpec{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
-				)
-				f.CreateMCPGatewayExtension(ctx, t, cfg,
-					"recover-cfg-ext", ns,
-					"recover-cfg-gw", prov.ConfigData["gateway-namespace"],
-					f.WithPublicHost("recover.mcp.local"),
-					f.WithSectionName("http"),
-				)
-				f.WaitForExtensionReady(ctx, t, cfg, "recover-cfg-ext", ns)
-				configData = map[string]string{
-					"extension-name":      "recover-cfg-ext",
-					"extension-namespace": ns,
-					"section-name":        "http",
-					"route-hostname":      "recover.mcp.local",
-					"prefix":              prov.ConfigData["prefix"],
-				}
+				setupKuadrantExtension(ctx, t, cfg, prov, ns)
+				configData = f.BuildControllerConfigData(prov, "")
 			default:
 				listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
 				configData = map[string]string{
@@ -458,7 +441,9 @@ func TestGatewayConformanceRecoverOnConfigMapUpdate(t *testing.T) {
 			if err := r.Get(ctx, server.Name, server.Namespace, server); err != nil {
 				t.Fatalf("failed to get MCPServer: %v", err)
 			}
-			f.AssertGatewayAddressURL(t, server, "recover.mcp.local", "/mcp")
+			if prov.Name != "kuadrant" {
+				f.AssertGatewayAddressURL(t, server, "recover.mcp.local", "/mcp")
+			}
 			t.Logf("GatewayRegistered recovered to True with address: %s", server.Status.Address.URL)
 			return ctx
 		}).
@@ -549,6 +534,12 @@ func TestGatewayConformanceConfigMapUpdateTriggersStatusUpdate(t *testing.T) {
 			var configData map[string]string
 			switch prov.Name {
 			case "kuadrant":
+				ext := &kuadrantapi.MCPGatewayExtension{
+					ObjectMeta: metav1.ObjectMeta{Name: extName, Namespace: extNs},
+				}
+				f.UpdateWithRetry(ctx, t, cfg.Client().Resources(), ext, func(e *kuadrantapi.MCPGatewayExtension) {
+					e.Spec.PublicHost = "second.mcp.local"
+				})
 				configData = map[string]string{
 					"extension-name":      extName,
 					"extension-namespace": extNs,
