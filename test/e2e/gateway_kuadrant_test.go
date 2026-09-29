@@ -644,19 +644,19 @@ func TestKuadrantPublicAddressPending(t *testing.T) {
 				"prefix":              prov.ConfigData["prefix"],
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
-			ctx = f.SetupMCPServer(ctx, t, cfg, "pubaddr-pend", true,
+			ctx = f.SetupMCPServer(ctx, t, cfg, "pubaddr-pend", false,
 				f.WithGateway(prov.Name, configMapName),
 				f.WithPath("/mcp"),
 			)
 			return ctx
 		}).
-		Assess("GatewayRegistered=False with reason PublicAddressPending", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("GatewayRegistered=False with PublicAddressPending message", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			server := f.ServerFromContext(ctx)
 			r := cfg.Client().Resources()
 
-			f.WaitForMCPServerConditionReason(ctx, t, r, server,
-				"GatewayRegistered", metav1.ConditionFalse, "PublicAddressPending")
-			t.Log("GatewayRegistered=False with reason PublicAddressPending (wildcard listener, no publicHost)")
+			f.WaitForMCPServerConditionMessageContains(ctx, t, r, server,
+				"GatewayRegistered", metav1.ConditionFalse, "GatewayNotRegistered", "Waiting for public address")
+			t.Log("GatewayRegistered=False with PublicAddressPending message (wildcard listener, no publicHost)")
 			return ctx
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

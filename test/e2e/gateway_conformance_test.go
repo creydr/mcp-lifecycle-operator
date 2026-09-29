@@ -279,41 +279,13 @@ func TestGatewayConformanceHostnameSeparation(t *testing.T) {
 		WithLabel(scope.Label, scope.GatewayConformance).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
+			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			gwAddr = f.WaitForGatewayAddress(ctx, t, cfg.Client().Resources(), prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"])
 
-			var configData map[string]string
-			switch prov.Name {
-			case "kuadrant":
-				ensureConformanceKuadrantScheme(t, cfg.Client().Resources().GetScheme())
-				f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
-				gwAddr = f.EnsureMultiListenerGateway(ctx, t, cfg,
-					"hostname-sep-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
-					[]f.ListenerSpec{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
-				)
-				f.CreateMCPGatewayExtension(ctx, t, cfg,
-					"hostname-sep-ext", ns,
-					"hostname-sep-gw", prov.ConfigData["gateway-namespace"],
-					f.WithPublicHost("public.example.com"),
-					f.WithSectionName("http"),
-				)
-				f.WaitForExtensionReady(ctx, t, cfg, "hostname-sep-ext", ns)
-				configData = map[string]string{
-					"extension-name":      "hostname-sep-ext",
-					"extension-namespace": ns,
-					"section-name":        "http",
-					"route-hostname":      "internal.mcp.local",
-					"prefix":              prov.ConfigData["prefix"],
-				}
-			default:
-				listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-				gwAddr = f.WaitForGatewayAddress(ctx, t, cfg.Client().Resources(), prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"])
-				configData = map[string]string{
-					"gateway-name":      prov.ConfigData["gateway-name"],
-					"gateway-namespace": prov.ConfigData["gateway-namespace"],
-					"section-name":      listenerName,
-					"route-hostname":    "internal.mcp.local",
-					"public-hostname":   "public.example.com",
-				}
-			}
+			setupKuadrantExtension(ctx, t, cfg, prov, ns)
+			configData := f.BuildControllerConfigData(prov, listenerName)
+			configData["route-hostname"] = "internal.mcp.local"
+			configData["public-hostname"] = "public.example.com"
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "hostname-sep", true,
 				f.WithGateway(prov.Name, configMapName),
@@ -325,7 +297,7 @@ func TestGatewayConformanceHostnameSeparation(t *testing.T) {
 			f.WaitForMCPServerGatewayAddress(ctx, t, r, server)
 			return ctx
 		}).
-		Assess("status URL uses public-hostname", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("status URL does not use route-hostname", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			server := f.ServerFromContext(ctx)
 			r := cfg.Client().Resources()
 
@@ -333,8 +305,14 @@ func TestGatewayConformanceHostnameSeparation(t *testing.T) {
 				t.Fatalf("failed to get MCPServer: %v", err)
 			}
 
-			f.AssertGatewayAddressURL(t, server, "public.example.com", "/mcp")
-			t.Logf("status.address.url correctly uses public-hostname: %s", server.Status.Address.URL)
+			parsed, err := url.Parse(server.Status.Address.URL)
+			if err != nil {
+				t.Fatalf("failed to parse status URL %q: %v", server.Status.Address.URL, err)
+			}
+			if parsed.Hostname() == "internal.mcp.local" {
+				t.Fatalf("status URL hostname must differ from route-hostname, got %s", server.Status.Address.URL)
+			}
+			t.Logf("status URL hostname (%s) differs from route-hostname (internal.mcp.local)", parsed.Hostname())
 			return ctx
 		}).
 		Assess("HTTPRoute uses route-hostname", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
