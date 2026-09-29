@@ -85,6 +85,7 @@ func main() {
 	var requireImageDigest bool
 	var maxStorageMounts int
 	var requiredLabels string
+	var networkPolicyDefaultPosture string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -124,6 +125,13 @@ func main() {
 	flag.StringVar(&requiredLabels, "required-labels", "",
 		"Comma-separated list of labels that must be present on MCPServer resources. "+
 			"Falls back to REQUIRED_LABELS env var if not set. Empty means no requirement.")
+	flag.StringVar(&networkPolicyDefaultPosture, "network-policy-default-posture", "open",
+		"Default NetworkPolicy posture applied to a managed workload when a network dimension is left "+
+			"unconfigured. \"open\" keeps the historical default; \"restricted\" denies unconfigured ingress by "+
+			"default. Under \"restricted\", set Spec.Network.IngressFrom to include peers matching the operator "+
+			"pods and each required gateway source; otherwise an enforcing CNI blocks the operator handshake and "+
+			"gateway traffic, so the server never becomes Verified and status.address/ServerReady are not "+
+			"published. Unconfigured egress is left unmanaged. Explicit Spec.Network values are always honored.")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -131,6 +139,13 @@ func main() {
 	atomicLevel := extractAtomicLevel(&opts)
 	opts.Level = &atomicLevel
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	defaultPosture, err := controller.ParseDefaultPosture(networkPolicyDefaultPosture)
+	if err != nil {
+		setupLog.Error(err, "invalid --network-policy-default-posture value")
+		os.Exit(1)
+	}
+	setupLog.Info("NetworkPolicy default posture configured", "posture", defaultPosture)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -236,11 +251,12 @@ func main() {
 	}
 
 	reconciler := &controller.MCPServerReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		Recorder:   mgr.GetEventRecorder("mcpserver-controller"),
-		APIReader:  mgr.GetAPIReader(),
-		TLSProfile: tlsCfg.tlsConfigFunc(),
+		Client:                      mgr.GetClient(),
+		Scheme:                      mgr.GetScheme(),
+		Recorder:                    mgr.GetEventRecorder("mcpserver-controller"),
+		APIReader:                   mgr.GetAPIReader(),
+		TLSProfile:                  tlsCfg.tlsConfigFunc(),
+		NetworkPolicyDefaultPosture: defaultPosture,
 	}
 	if strings.EqualFold(os.Getenv("PROPAGATE_TLS_ENV_VARS"), "true") {
 		reconciler.TLSEnvVars = tlsCfg.envVars()
