@@ -408,15 +408,14 @@ func WaitForEndpointsReady(ctx context.Context, t *testing.T, cfg *envconf.Confi
 }
 
 // CreateGatewayConfigMap creates a ConfigMap with gateway integration settings.
-// It strips keys that are only used by e2e setup (gateway-class, gateway-name,
-// gateway-namespace) and not read by the controller.
+// It copies all entries from configData except "gateway-class", which is not a
+// ConfigMap key but a provider registration detail.
 func CreateGatewayConfigMap(ctx context.Context, t *testing.T, cfg *envconf.Config,
 	name, namespace string, configData map[string]string) {
 	t.Helper()
 	data := make(map[string]string, len(configData))
 	for k, v := range configData {
-		switch k {
-		case "gateway-class", "gateway-name", "gateway-namespace":
+		if k == "gateway-class" {
 			continue
 		}
 		data[k] = v
