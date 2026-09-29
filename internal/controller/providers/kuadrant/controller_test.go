@@ -118,9 +118,9 @@ func setHTTPRouteAccepted(ctx context.Context, route *gatewayv1.HTTPRoute) {
 	Expect(k8sClient.Status().Update(ctx, route)).To(Succeed())
 }
 
-func setExtensionReady(ctx context.Context, name, namespace string) {
+func setExtensionReady(ctx context.Context, name string) {
 	ext := &kuadrantapi.MCPGatewayExtension{}
-	Expect(k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, ext)).To(Succeed())
+	Expect(k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: "gateway-ns"}, ext)).To(Succeed())
 	ext.Status.Conditions = []metav1.Condition{
 		{
 			Type:               "Ready",
@@ -177,7 +177,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		ext.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPGatewayExtension"))
 		Expect(k8sClient.Create(ctx, ext)).To(Succeed())
 		if ready {
-			setExtensionReady(ctx, gatewayExtensionName, "gateway-ns")
+			setExtensionReady(ctx, gatewayExtensionName)
 		}
 	}
 
@@ -995,7 +995,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		}
 		ext2.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPGatewayExtension"))
 		Expect(k8sClient.Create(ctx, ext2)).To(Succeed())
-		setExtensionReady(ctx, "other-extension", "gateway-ns")
+		setExtensionReady(ctx, "other-extension")
 
 		By("updating ConfigMap extension-name")
 		cm := &corev1.ConfigMap{}
@@ -1792,7 +1792,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(registered.Reason).To(Equal(reasonExtensionNotReady))
 
 		By("making extension ready")
-		setExtensionReady(ctx, gatewayExtensionName, "gateway-ns")
+		setExtensionReady(ctx, gatewayExtensionName)
 
 		By("second reconcile: extension ready, should proceed to create HTTPRoute")
 		_, err = doReconcile()
@@ -1826,7 +1826,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		}
 		ext.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPGatewayExtension"))
 		Expect(k8sClient.Create(ctx, ext)).To(Succeed())
-		setExtensionReady(ctx, gatewayExtensionName, "gateway-ns")
+		setExtensionReady(ctx, gatewayExtensionName)
 
 		createConfigMap(map[string]string{
 			configKeyExtensionName:      gatewayExtensionName,
