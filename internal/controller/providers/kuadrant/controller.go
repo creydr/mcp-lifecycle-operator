@@ -191,7 +191,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	if !isExtensionReady(ext) {
 		msg := fmt.Sprintf("MCPGatewayExtension %q is not ready", cfg.extensionName)
-		if readyCond := meta.FindStatusCondition(ext.Status.Conditions, "Ready"); readyCond != nil {
+		if readyCond := meta.FindStatusCondition(ext.Status.Conditions, "Ready"); readyCond != nil && readyCond.Message != "" {
 			msg = readyCond.Message
 		}
 		statusErr := providers.UpdateBindingStatus(ctx, r.Status(), binding, metav1.ConditionFalse,
@@ -209,6 +209,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	sectionName := ref.SectionName
 	if cfg.sectionName != "" {
 		sectionName = cfg.sectionName
+	}
+	if sectionName == "" {
+		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
+			fmt.Sprintf("MCPGatewayExtension %q has no targetRef.sectionName; set %q in the ConfigMap", cfg.extensionName, configKeySectionName))
 	}
 
 	routeHostname := cfg.routeHostname

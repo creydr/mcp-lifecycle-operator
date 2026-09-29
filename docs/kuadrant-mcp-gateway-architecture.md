@@ -48,7 +48,9 @@ MCPServerRegistration.
 
 ### Step 1: Create the Gateway
 
-Create a Gateway with two listeners (dual-listener pattern):
+Create a Gateway with two listeners (dual-listener pattern). This example uses
+HTTP for local/Kind development; production deployments should use HTTPS with
+TLS termination at the gateway:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -103,8 +105,8 @@ spec:
 - **`targetRef.sectionName: mcp`** - points to the catch-all listener. The
   mcp-gateway-controller creates its broker HTTPRoute on this listener.
 - **`publicHost`** - the public address clients will use (typically the ELB
-  hostname). Required when using a wildcard listener, since `*.mcp.local` is not
-  publicly resolvable.
+  hostname). Required here because the selected `mcp` listener has no hostname;
+  `mcps` is used for per-server routes.
 
 The mcp-gateway-controller sees this and creates four resources:
 
