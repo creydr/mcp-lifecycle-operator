@@ -412,6 +412,36 @@ func TestKuadrantExtensionFallback(t *testing.T) {
 			t.Logf("extension publicHost used via direct reference: %s", server.Status.Address.URL)
 			return ctx
 		}).
+		Assess("HTTPRoute uses ConfigMap section-name override", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+
+			bindingName := server.Name + "-gateway-binding"
+			route := &gatewayv1.HTTPRoute{}
+			if err := r.Get(ctx, bindingName, server.Namespace, route); err != nil {
+				t.Fatalf("HTTPRoute not found: %v", err)
+			}
+
+			if len(route.Spec.ParentRefs) == 0 {
+				t.Fatal("HTTPRoute has no parentRefs")
+			}
+			parentRef := route.Spec.ParentRefs[0]
+			if parentRef.SectionName == nil || string(*parentRef.SectionName) != "mcps" {
+				actual := "<nil>"
+				if parentRef.SectionName != nil {
+					actual = string(*parentRef.SectionName)
+				}
+				t.Fatalf("expected HTTPRoute parentRef.sectionName 'mcps' (from ConfigMap), got %s", actual)
+			}
+			t.Log("HTTPRoute parentRef.sectionName = mcps (ConfigMap override, not extension's 'mcp')")
+
+			expectedHostname := server.Name + "." + server.Namespace + ".mcp.local"
+			if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != expectedHostname {
+				t.Fatalf("expected HTTPRoute hostname %s (auto-constructed from wildcard), got %v", expectedHostname, route.Spec.Hostnames)
+			}
+			t.Logf("HTTPRoute hostname auto-constructed from wildcard listener: %s", expectedHostname)
+			return ctx
+		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			return f.TeardownMCPServer(ctx, t, cfg)
 		}).
@@ -568,6 +598,65 @@ func TestKuadrantCrossNamespaceExtension(t *testing.T) {
 
 			f.AssertGatewayAddressURL(t, server, "cross-ns.example.com", "/mcp")
 			t.Logf("cross-namespace extension discovered: %s", server.Status.Address.URL)
+			return ctx
+		}).
+		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			return f.TeardownMCPServer(ctx, t, cfg)
+		}).
+		Feature()
+
+	testenv.Test(t, feature)
+}
+
+func TestKuadrantPublicAddressPending(t *testing.T) {
+	prov := f.ActiveProvider(t)
+	const configMapName = "gw-pubaddr-pending-config"
+
+	feature := features.New("Kuadrant: PublicAddressPending when wildcard listener and no publicHost").
+		WithLabel(category.Label, category.Networking).
+		WithLabel(speed.Label, speed.Moderate).
+		WithLabel(scope.Label, scope.Kuadrant).
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			ensureKuadrantScheme(t, cfg.Client().Resources().GetScheme())
+
+			ns := ctx.Value(f.NsKey).(string)
+			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
+
+			wildcard := gatewayv1.Hostname("*.mcp.local")
+			f.EnsureMultiListenerGateway(ctx, t, cfg,
+				"kuadrant-pubaddr-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+				[]f.ListenerSpec{
+					{Name: "mcps", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &wildcard},
+				},
+			)
+
+			f.CreateMCPGatewayExtension(ctx, t, cfg,
+				"pubaddr-ext", ns,
+				"kuadrant-pubaddr-gw", prov.ConfigData["gateway-namespace"],
+				f.WithSectionName("mcps"),
+			)
+			f.WaitForExtensionReady(ctx, t, cfg, "pubaddr-ext", ns)
+
+			configData := map[string]string{
+				"extension-name":      "pubaddr-ext",
+				"extension-namespace": ns,
+				"section-name":        "mcps",
+				"prefix":              prov.ConfigData["prefix"],
+			}
+			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
+			ctx = f.SetupMCPServer(ctx, t, cfg, "pubaddr-pend", true,
+				f.WithGateway(prov.Name, configMapName),
+				f.WithPath("/mcp"),
+			)
+			return ctx
+		}).
+		Assess("GatewayRegistered=False with reason PublicAddressPending", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			server := f.ServerFromContext(ctx)
+			r := cfg.Client().Resources()
+
+			f.WaitForMCPServerConditionReason(ctx, t, r, server,
+				"GatewayRegistered", metav1.ConditionFalse, "PublicAddressPending")
+			t.Log("GatewayRegistered=False with reason PublicAddressPending (wildcard listener, no publicHost)")
 			return ctx
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
