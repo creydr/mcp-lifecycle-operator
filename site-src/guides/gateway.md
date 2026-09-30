@@ -218,7 +218,7 @@ data:
 | `extension-name`       | Yes      |         | Name of the MCPGatewayExtension resource                     |
 | `extension-namespace`  | Yes      |         | Namespace where the MCPGatewayExtension resource lives       |
 | `route-hostname`       | No       | auto    | Hostname for the HTTPRoute. When omitted, auto-constructed from the Gateway listener's wildcard hostname (e.g., `*.mcp.local` + MCPServer `my-server` in namespace `team-a` = `my-server.team-a.mcp.local`). Set explicitly to override. |
-| `prefix`               | No       | auto    | Tool/prompt name prefix for federation (e.g., `myserver_`). When omitted, auto-generated as `<mcpserver_name>_<namespace>_` (hyphens replaced with underscores). Set explicitly only if the auto-generated prefix conflicts with another MCPServerRegistration. |
+| `prefix`               | No       | auto    | Tool/prompt name prefix for federation (e.g., `myserver_`). When omitted, auto-generated as a short hash of the MCPServer name and namespace (e.g., `mcp_17ee74f4_`). Set explicitly only if the auto-generated prefix conflicts with another MCPServerRegistration. |
 | `section-name`         | No       | `mcps`  | Gateway listener section name for the parent reference       |
 
 ### What It Creates

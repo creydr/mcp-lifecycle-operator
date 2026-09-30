@@ -18,7 +18,10 @@ package kuadrant
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -226,6 +229,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 	AfterEach(func() {
 		for _, obj := range []client.Object{
 			&kuadrantapi.MCPServerRegistration{ObjectMeta: metav1.ObjectMeta{Name: bindingName, Namespace: testNamespace}},
+			&kuadrantapi.MCPServerRegistration{ObjectMeta: metav1.ObjectMeta{Name: "conflicting-reg", Namespace: testNamespace}},
 			&gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: bindingName, Namespace: testNamespace}},
 			&mcpv1alpha1.MCPGatewayBinding{ObjectMeta: metav1.ObjectMeta{Name: bindingName, Namespace: testNamespace}},
 			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: configMapName, Namespace: testNamespace}},
@@ -372,7 +376,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(binding.Status.URL).To(Equal("http://myserver.mcp.local/mcp"))
 	})
 
-	It("should auto-generate prefix from MCPServer name and namespace when prefix omitted", func() {
+	It("should auto-generate prefix as hash when prefix omitted", func() {
 		createMCPServer()
 		createGatewayExtension("myserver.mcp.local", true)
 		data := validConfigData()
@@ -383,10 +387,12 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		_, err := doReconcile()
 		Expect(err).NotTo(HaveOccurred())
 
-		By("verifying MCPServerRegistration was created with auto-generated prefix (hyphens replaced with underscores)")
+		h := sha256.Sum256([]byte(mcpServerName + "/" + testNamespace))
+		expectedPrefix := "mcp_" + hex.EncodeToString(h[:4]) + "_"
+
 		reg := &kuadrantapi.MCPServerRegistration{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
-		Expect(reg.Spec.Prefix).To(Equal("test_kuadrant_mcp_default_"))
+		Expect(reg.Spec.Prefix).To(Equal(expectedPrefix))
 	})
 
 	It("should auto-generate prefix when prefix is empty string in ConfigMap", func() {
@@ -400,20 +406,33 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		_, err := doReconcile()
 		Expect(err).NotTo(HaveOccurred())
 
+		h := sha256.Sum256([]byte(mcpServerName + "/" + testNamespace))
+		expectedPrefix := "mcp_" + hex.EncodeToString(h[:4]) + "_"
+
 		reg := &kuadrantapi.MCPServerRegistration{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
-		Expect(reg.Spec.Prefix).To(Equal("test_kuadrant_mcp_default_"))
+		Expect(reg.Spec.Prefix).To(Equal(expectedPrefix))
 	})
 
-	It("should set Registered=False when auto-generated prefix conflicts with existing registration", func() {
+	It("should produce different prefixes for different name/namespace pairs", func() {
+		h1 := sha256.Sum256([]byte("a-b/c"))
+		h2 := sha256.Sum256([]byte("a/b-c"))
+		prefix1 := "mcp_" + hex.EncodeToString(h1[:4]) + "_"
+		prefix2 := "mcp_" + hex.EncodeToString(h2[:4]) + "_"
+		Expect(prefix1).NotTo(Equal(prefix2))
+	})
+
+	It("should set Registered=False with RequeueAfter when auto-generated prefix conflicts", func() {
 		createMCPServer()
 		createGatewayExtension("myserver.mcp.local", true)
 		data := validConfigData()
 		delete(data, configKeyPrefix)
 		createConfigMap(data)
 
-		By("creating a pre-existing MCPServerRegistration with the same prefix that would be auto-generated")
-		autoPrefix := "test_kuadrant_mcp_default_"
+		h := sha256.Sum256([]byte(mcpServerName + "/" + testNamespace))
+		autoPrefix := "mcp_" + hex.EncodeToString(h[:4]) + "_"
+
+		By("creating a pre-existing MCPServerRegistration with the same prefix")
 		conflictingReg := &kuadrantapi.MCPServerRegistration{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "conflicting-reg",
@@ -436,8 +455,9 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 
 		createBinding()
 
-		_, err := doReconcile()
+		result, err := doReconcile()
 		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 		binding := &mcpv1alpha1.MCPGatewayBinding{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
@@ -449,20 +469,69 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(registered.Message).To(ContainSubstring(configKeyPrefix))
 	})
 
-	It("should not flag conflict when explicit prefix matches auto-generated format", func() {
+	It("should detect conflict for explicit prefix and set Registered=False", func() {
 		createMCPServer()
 		createGatewayExtension("myserver.mcp.local", true)
 		data := validConfigData()
-		data[configKeyPrefix] = "test_kuadrant_mcp_default"
+		data[configKeyPrefix] = "shared_prefix_"
+		createConfigMap(data)
+
+		By("creating a pre-existing MCPServerRegistration with the same explicit prefix")
+		conflictingReg := &kuadrantapi.MCPServerRegistration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "conflicting-reg",
+				Namespace: testNamespace,
+			},
+			Spec: kuadrantapi.MCPServerRegistrationSpec{
+				TargetRef: kuadrantapi.TargetReference{
+					Group: "gateway.networking.k8s.io",
+					Kind:  "HTTPRoute",
+					Name:  "other-route",
+				},
+				Path:   "/mcp",
+				Prefix: "shared_prefix_",
+				State:  "Enabled",
+			},
+		}
+		conflictingReg.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPServerRegistration"))
+		Expect(k8sClient.Create(ctx, conflictingReg)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, conflictingReg) }()
+
+		createBinding()
+
+		result, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(30 * time.Second))
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Message).To(ContainSubstring("shared_prefix_"))
+		Expect(registered.Message).To(ContainSubstring("already in use"))
+	})
+
+	It("should not flag conflict for own registration", func() {
+		createMCPServer()
+		createGatewayExtension("myserver.mcp.local", true)
+		data := validConfigData()
+		delete(data, configKeyPrefix)
 		createConfigMap(data)
 		createBinding()
 
 		_, err := doReconcile()
 		Expect(err).NotTo(HaveOccurred())
 
+		By("reconciling again — own registration should not be treated as conflict")
+		_, err = doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
 		reg := &kuadrantapi.MCPServerRegistration{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
-		Expect(reg.Spec.Prefix).To(Equal("test_kuadrant_mcp_default"))
+		h := sha256.Sum256([]byte(mcpServerName + "/" + testNamespace))
+		expectedPrefix := "mcp_" + hex.EncodeToString(h[:4]) + "_"
+		Expect(reg.Spec.Prefix).To(Equal(expectedPrefix))
 	})
 
 	It("should default sectionName from extension", func() {
