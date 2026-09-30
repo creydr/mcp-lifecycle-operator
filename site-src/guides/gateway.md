@@ -208,20 +208,18 @@ metadata:
   name: mcp-kuadrant-config
   namespace: default
 data:
-  gateway-name: mcp-gateway
-  gateway-namespace: mcp-system
-  prefix: myserver_
+  extension-name: mcp-gateway-extension
+  extension-namespace: mcp-system
   section-name: mcps
 ```
 
-| Key                 | Required | Default | Description                                                  |
-|---------------------|----------|---------|--------------------------------------------------------------|
-| `gateway-name`      | Yes      |         | Name of the existing Gateway resource                        |
-| `gateway-namespace` | Yes      |         | Namespace where the Gateway resource lives                   |
-| `route-hostname`    | No       | auto    | Hostname for the HTTPRoute. When omitted, auto-constructed from the Gateway listener's wildcard hostname (e.g., `*.mcp.local` + MCPServer `my-server` in namespace `team-a` = `my-server.team-a.mcp.local`). Set explicitly to override. |
-| `public-hostname`   | No       | auto    | Public hostname for the status URL. When omitted, resolved via: MCPGatewayExtension `publicHost` → public listener hostname. Set explicitly to override all auto-resolution. |
-| `prefix`            | Yes      |         | Tool/prompt name prefix for federation (e.g., `myserver_`)   |
-| `section-name`      | No       | `mcps`  | Gateway listener section name for the parent reference       |
+| Key                    | Required | Default | Description                                                  |
+|------------------------|----------|---------|--------------------------------------------------------------|
+| `extension-name`       | Yes      |         | Name of the MCPGatewayExtension resource                     |
+| `extension-namespace`  | Yes      |         | Namespace where the MCPGatewayExtension resource lives       |
+| `route-hostname`       | No       | auto    | Hostname for the HTTPRoute. When omitted, auto-constructed from the Gateway listener's wildcard hostname (e.g., `*.mcp.local` + MCPServer `my-server` in namespace `team-a` = `my-server.team-a.mcp.local`). Set explicitly to override. |
+| `prefix`               | No       | auto    | Tool/prompt name prefix for federation (e.g., `myserver_`). When omitted, auto-generated as `<mcpserver_name>_<namespace>_` (hyphens replaced with underscores). Set explicitly only if the auto-generated prefix conflicts with another MCPServerRegistration. |
+| `section-name`         | No       | `mcps`  | Gateway listener section name for the parent reference       |
 
 ### What It Creates
 

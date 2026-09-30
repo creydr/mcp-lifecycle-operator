@@ -186,7 +186,7 @@ data:
   extension-name: mcp-gateway-extension
   extension-namespace: mcp-system
   section-name: mcps      # override: per-server routes use the wildcard listener
-  prefix: example_
+  # prefix: example_   # optional — auto-generated from MCPServer name + namespace when omitted
 ```
 
 The **mcp-lifecycle-operator** creates three resources:

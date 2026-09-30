@@ -28,7 +28,7 @@ Local minimal Go types (not imported from Kuadrant) because:
 | `gateway-name`      | Yes      | —       | Gateway resource name                            |
 | `gateway-namespace` | Yes      | —       | Gateway resource namespace                       |
 | `hostname`          | No       | auto    | Hostname for the HTTPRoute; auto-constructed from wildcard listener when omitted |
-| `prefix`            | Yes      | —       | Tool/prompt name prefix for federation           |
+| `prefix`            | No       | auto    | Tool/prompt name prefix for federation; auto-generated as `<name>_<namespace>_` when omitted |
 | `section-name`      | No       | `mcps`  | Gateway listener section name                    |
 
 ### MCPServerRegistration Fields

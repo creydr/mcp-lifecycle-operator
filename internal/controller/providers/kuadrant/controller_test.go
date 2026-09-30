@@ -372,7 +372,7 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(binding.Status.URL).To(Equal("http://myserver.mcp.local/mcp"))
 	})
 
-	It("should set Registered=False when prefix is missing", func() {
+	It("should auto-generate prefix from MCPServer name and namespace when prefix omitted", func() {
 		createMCPServer()
 		createGatewayExtension("myserver.mcp.local", true)
 		data := validConfigData()
@@ -383,12 +383,86 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		_, err := doReconcile()
 		Expect(err).NotTo(HaveOccurred())
 
+		By("verifying MCPServerRegistration was created with auto-generated prefix (hyphens replaced with underscores)")
+		reg := &kuadrantapi.MCPServerRegistration{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
+		Expect(reg.Spec.Prefix).To(Equal("test_kuadrant_mcp_default_"))
+	})
+
+	It("should auto-generate prefix when prefix is empty string in ConfigMap", func() {
+		createMCPServer()
+		createGatewayExtension("myserver.mcp.local", true)
+		data := validConfigData()
+		data[configKeyPrefix] = ""
+		createConfigMap(data)
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		reg := &kuadrantapi.MCPServerRegistration{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
+		Expect(reg.Spec.Prefix).To(Equal("test_kuadrant_mcp_default_"))
+	})
+
+	It("should set Registered=False when auto-generated prefix conflicts with existing registration", func() {
+		createMCPServer()
+		createGatewayExtension("myserver.mcp.local", true)
+		data := validConfigData()
+		delete(data, configKeyPrefix)
+		createConfigMap(data)
+
+		By("creating a pre-existing MCPServerRegistration with the same prefix that would be auto-generated")
+		autoPrefix := "test_kuadrant_mcp_default_"
+		conflictingReg := &kuadrantapi.MCPServerRegistration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "conflicting-reg",
+				Namespace: testNamespace,
+			},
+			Spec: kuadrantapi.MCPServerRegistrationSpec{
+				TargetRef: kuadrantapi.TargetReference{
+					Group: "gateway.networking.k8s.io",
+					Kind:  "HTTPRoute",
+					Name:  "other-route",
+				},
+				Path:   "/mcp",
+				Prefix: autoPrefix,
+				State:  "Enabled",
+			},
+		}
+		conflictingReg.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPServerRegistration"))
+		Expect(k8sClient.Create(ctx, conflictingReg)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, conflictingReg) }()
+
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
 		binding := &mcpv1alpha1.MCPGatewayBinding{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
 		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
 		Expect(registered).NotTo(BeNil())
 		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Message).To(ContainSubstring(autoPrefix))
+		Expect(registered.Message).To(ContainSubstring("already in use"))
 		Expect(registered.Message).To(ContainSubstring(configKeyPrefix))
+	})
+
+	It("should not flag conflict when explicit prefix matches auto-generated format", func() {
+		createMCPServer()
+		createGatewayExtension("myserver.mcp.local", true)
+		data := validConfigData()
+		data[configKeyPrefix] = "test_kuadrant_mcp_default"
+		createConfigMap(data)
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		reg := &kuadrantapi.MCPServerRegistration{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, reg)).To(Succeed())
+		Expect(reg.Spec.Prefix).To(Equal("test_kuadrant_mcp_default"))
 	})
 
 	It("should default sectionName from extension", func() {
