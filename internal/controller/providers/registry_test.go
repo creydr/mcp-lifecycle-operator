@@ -30,13 +30,17 @@ func TestRegisterAndSetupAll(t *testing.T) {
 	registry = nil
 
 	var calls []string
-	Register("alpha", func(mgr ctrl.Manager) error {
-		calls = append(calls, "alpha")
-		return nil
+	Register("alpha", Registration{
+		Factory: func(mgr ctrl.Manager) error {
+			calls = append(calls, "alpha")
+			return nil
+		},
 	})
-	Register("beta", func(mgr ctrl.Manager) error {
-		calls = append(calls, "beta")
-		return nil
+	Register("beta", Registration{
+		Factory: func(mgr ctrl.Manager) error {
+			calls = append(calls, "beta")
+			return nil
+		},
 	})
 
 	if len(registry) != 2 {
@@ -57,8 +61,10 @@ func TestSetupAllError(t *testing.T) {
 
 	registry = nil
 
-	Register("failing", func(mgr ctrl.Manager) error {
-		return fmt.Errorf("setup failed")
+	Register("failing", Registration{
+		Factory: func(mgr ctrl.Manager) error {
+			return fmt.Errorf("setup failed")
+		},
 	})
 
 	err := SetupAll(nil)
