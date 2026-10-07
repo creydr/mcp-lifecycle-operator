@@ -1,4 +1,4 @@
-//go:build e2e && e2e_gateway
+//go:build e2e
 
 /*
 Copyright 2026 The Kubernetes Authors
