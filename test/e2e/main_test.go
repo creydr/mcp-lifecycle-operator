@@ -26,7 +26,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/e2e-framework/pkg/env"
@@ -75,31 +74,13 @@ func TestMain(m *testing.M) {
 	))
 
 	// Create a unique namespace before each test, delete it after.
-	testenv.BeforeEachTest(func(ctx context.Context, cfg *envconf.Config, t *testing.T) (context.Context, error) {
-		f.MustDiscoverOperatorOnce(ctx, cfg, t)
-
-		ns := envconf.RandomName("e2e", 16)
-		nsObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}
-		if err := cfg.Client().Resources().Create(ctx, nsObj); err != nil {
-			return ctx, err
-		}
-		t.Logf("created namespace %s", ns)
-		ctx = context.WithValue(ctx, f.NsKey, ns)
-		return ctx, nil
-	})
+	f.WithNamespaceManagement(testenv, "e2e")
 
 	testenv.AfterEachTest(func(ctx context.Context, cfg *envconf.Config, t *testing.T) (context.Context, error) {
-		ns, ok := ctx.Value(f.NsKey).(string)
-		if !ok || ns == "" {
-			t.Log("namespace not found in context, skipping cleanup")
-			return ctx, nil
-		}
 		if t.Failed() {
-			dumpDiagnostics(ctx, t, cfg, ns)
-		}
-		nsObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}
-		if err := cfg.Client().Resources().Delete(ctx, nsObj); err != nil {
-			t.Logf("failed to delete namespace %s: %v", ns, err)
+			if ns, ok := ctx.Value(f.NsKey).(string); ok && ns != "" {
+				dumpDiagnostics(ctx, t, cfg, ns)
+			}
 		}
 		return ctx, nil
 	})
