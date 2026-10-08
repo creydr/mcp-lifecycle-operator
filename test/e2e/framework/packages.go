@@ -1,5 +1,3 @@
-//go:build e2e
-
 /*
 Copyright 2026 The Kubernetes Authors
 
@@ -22,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -90,10 +89,8 @@ func labelsIntersect(a, b map[string][]string) bool {
 			continue
 		}
 		for _, av := range aVals {
-			for _, bv := range bVals {
-				if av == bv {
-					return true
-				}
+			if slices.Contains(bVals, av) {
+				return true
 			}
 		}
 	}
@@ -152,8 +149,8 @@ func RunPackage(name string, m *testing.M, configure func(cfg *envconf.Config) e
 
 	code := testenv.Run(m)
 
-	for i := len(lcs) - 1; i >= 0; i-- {
-		if err := lcs[i].Teardown(ctx, cfg); err != nil {
+	for i, lc := range slices.Backward(lcs) {
+		if err := lc.Teardown(ctx, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "package %q: lifecycle[%d] teardown failed: %v\n", name, i, err)
 		}
 	}
