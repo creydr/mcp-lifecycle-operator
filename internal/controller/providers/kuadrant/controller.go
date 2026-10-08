@@ -52,17 +52,16 @@ func init() {
 	providers.Register(ProviderName, providers.Registration{
 		Factory: Setup,
 		RequiredCRDs: []schema.GroupVersionKind{
-			{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "HTTPRoute"},
-			{Group: "mcp.kuadrant.io", Version: "v1alpha1", Kind: "MCPServerRegistration"},
+			{Group: gatewayv1.GroupName, Version: "v1", Kind: "HTTPRoute"},
+			{Group: gatewayv1.GroupName, Version: "v1", Kind: "Gateway"},
+			{Group: kuadrantapi.SchemeGroupVersion.Group, Version: kuadrantapi.SchemeGroupVersion.Version, Kind: "MCPServerRegistration"},
+			{Group: kuadrantapi.SchemeGroupVersion.Group, Version: kuadrantapi.SchemeGroupVersion.Version, Kind: "MCPGatewayExtension"},
 		},
 	})
 }
 
 // Setup creates the kuadrant provider controller and registers it with the manager.
 func Setup(mgr ctrl.Manager) error {
-	if err := kuadrantapi.AddToScheme(mgr.GetScheme()); err != nil {
-		return fmt.Errorf("registering Kuadrant types: %w", err)
-	}
 	return (&Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -404,7 +403,7 @@ func (r *Reconciler) reconcileMCPServerRegistration(
 		},
 		Spec: kuadrantapi.MCPServerRegistrationSpec{
 			TargetRef: kuadrantapi.TargetReference{
-				Group: "gateway.networking.k8s.io",
+				Group: gatewayv1.GroupName,
 				Kind:  "HTTPRoute",
 				Name:  binding.Name,
 			},

@@ -47,7 +47,8 @@ func init() {
 	providers.Register(ProviderName, providers.Registration{
 		Factory: Setup,
 		RequiredCRDs: []schema.GroupVersionKind{
-			{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "HTTPRoute"},
+			{Group: gatewayv1.GroupName, Version: "v1", Kind: "HTTPRoute"},
+			{Group: gatewayv1.GroupName, Version: "v1", Kind: "Gateway"},
 		},
 	})
 }

@@ -69,6 +69,9 @@ func ensureIstioctl(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("creating bin directory: %w", err)
 	}
 
+	installedPath := filepath.Join(binDir, "istioctl")
+	_ = os.Remove(installedPath)
+
 	pkg := fmt.Sprintf("istio.io/istio/istioctl/cmd/istioctl@%s", istioVersion)
 	fmt.Printf("Building istioctl %s from source\n", istioVersion)
 	cmd := exec.CommandContext(ctx, "go", "install", pkg)
@@ -77,7 +80,6 @@ func ensureIstioctl(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("go install %s: %w\n%s", pkg, err, string(out))
 	}
 
-	installedPath := filepath.Join(binDir, "istioctl")
 	if err := os.Rename(installedPath, versionedPath); err != nil {
 		return "", fmt.Errorf("renaming istioctl to versioned path: %w", err)
 	}
