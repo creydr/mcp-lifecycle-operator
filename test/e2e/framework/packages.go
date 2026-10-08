@@ -183,6 +183,9 @@ func WithNamespaceManagement(testenv env.Environment, prefix string) {
 		if !ok || ns == "" {
 			return ctx, nil
 		}
+		if t.Failed() {
+			DumpDiagnostics(ctx, t, cfg, ns)
+		}
 		nsObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}
 		if err := cfg.Client().Resources().Delete(ctx, nsObj); err != nil {
 			t.Logf("failed to delete namespace %s: %v", ns, err)
