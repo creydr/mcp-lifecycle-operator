@@ -47,8 +47,12 @@ func TestAllCRDsPresent(t *testing.T) {
 		mapper.Add(gatewayGVK, meta.RESTScopeNamespace)
 
 		mgr := &fakeManager{mapper: mapper}
-		if !allCRDsPresent(mgr, []schema.GroupVersionKind{httpRouteGVK, gatewayGVK}) {
-			t.Fatal("expected allCRDsPresent to return true when all GVKs are mapped")
+		missing, err := missingCRDs(mgr, []schema.GroupVersionKind{httpRouteGVK, gatewayGVK})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(missing) != 0 {
+			t.Fatalf("expected no missing CRDs, got %v", missing)
 		}
 	})
 
@@ -57,16 +61,24 @@ func TestAllCRDsPresent(t *testing.T) {
 		mapper.Add(httpRouteGVK, meta.RESTScopeNamespace)
 
 		mgr := &fakeManager{mapper: mapper}
-		if allCRDsPresent(mgr, []schema.GroupVersionKind{httpRouteGVK, gatewayGVK}) {
-			t.Fatal("expected allCRDsPresent to return false when a GVK is missing")
+		missing, err := missingCRDs(mgr, []schema.GroupVersionKind{httpRouteGVK, gatewayGVK})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(missing) != 1 || missing[0] != gatewayGVK {
+			t.Fatalf("expected [%v] missing, got %v", gatewayGVK, missing)
 		}
 	})
 
 	t.Run("empty GVK list", func(t *testing.T) {
 		mapper := meta.NewDefaultRESTMapper(nil)
 		mgr := &fakeManager{mapper: mapper}
-		if !allCRDsPresent(mgr, nil) {
-			t.Fatal("expected allCRDsPresent to return true for empty GVK list")
+		missing, err := missingCRDs(mgr, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(missing) != 0 {
+			t.Fatalf("expected no missing CRDs, got %v", missing)
 		}
 	})
 }

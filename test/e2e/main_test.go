@@ -73,9 +73,8 @@ func TestMain(m *testing.M) {
 		f.BusyboxImage,
 	))
 
-	// Create a unique namespace before each test, delete it after.
-	f.WithNamespaceManagement(testenv, "e2e")
-
+	// Dump diagnostics before namespace cleanup so the resources are
+	// still available for inspection.
 	testenv.AfterEachTest(func(ctx context.Context, cfg *envconf.Config, t *testing.T) (context.Context, error) {
 		if t.Failed() {
 			if ns, ok := ctx.Value(f.NsKey).(string); ok && ns != "" {
@@ -84,6 +83,9 @@ func TestMain(m *testing.M) {
 		}
 		return ctx, nil
 	})
+
+	// Create a unique namespace before each test, delete it after.
+	f.WithNamespaceManagement(testenv, "e2e")
 
 	os.Exit(testenv.Run(m))
 }

@@ -55,7 +55,7 @@ func SetupAll(mgr ctrl.Manager) error {
 	}
 
 	for _, nf := range registry {
-		if len(nf.reg.RequiredCRDs) == 0 || allCRDsPresent(mgr, nf.reg.RequiredCRDs) {
+		if len(nf.reg.RequiredCRDs) == 0 {
 			if err := nf.reg.Factory(mgr); err != nil {
 				return fmt.Errorf("provider %s: %w", nf.name, err)
 			}
@@ -64,9 +64,24 @@ func SetupAll(mgr ctrl.Manager) error {
 		}
 
 		log := mgr.GetLogger().WithName("setup")
-		log.Info("Provider CRDs not yet available, deferring to CRD watcher",
-			"provider", nf.name)
-		watcher.pending = append(watcher.pending, nf)
+		missing, err := missingCRDs(mgr, nf.reg.RequiredCRDs)
+		if err != nil {
+			log.Info("Provider CRD discovery failed, deferring to CRD watcher",
+				"provider", nf.name, "error", err)
+			watcher.pending = append(watcher.pending, nf)
+			continue
+		}
+		if len(missing) > 0 {
+			log.Info("Provider CRDs not yet available, deferring to CRD watcher",
+				"provider", nf.name, "missing", missing)
+			watcher.pending = append(watcher.pending, nf)
+			continue
+		}
+
+		if err := nf.reg.Factory(mgr); err != nil {
+			return fmt.Errorf("provider %s: %w", nf.name, err)
+		}
+		watcher.started[nf.name] = true
 	}
 
 	if len(watcher.pending) > 0 {
