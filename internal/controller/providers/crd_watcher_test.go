@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -34,6 +35,19 @@ type fakeManager struct {
 
 func (f *fakeManager) GetRESTMapper() meta.RESTMapper {
 	return f.mapper
+}
+
+func (f *fakeManager) GetLogger() logr.Logger {
+	return logr.Discard()
+}
+
+type errorMapper struct {
+	meta.RESTMapper
+	err error
+}
+
+func (e *errorMapper) RESTMapping(schema.GroupKind, ...string) (*meta.RESTMapping, error) {
+	return nil, e.err
 }
 
 func TestAllCRDsPresent(t *testing.T) {
@@ -67,6 +81,14 @@ func TestAllCRDsPresent(t *testing.T) {
 		}
 		if len(missing) != 1 || missing[0] != gatewayGVK {
 			t.Fatalf("expected [%v] missing, got %v", gatewayGVK, missing)
+		}
+	})
+
+	t.Run("non-NoMatch error returns error", func(t *testing.T) {
+		mgr := &fakeManager{mapper: &errorMapper{err: fmt.Errorf("transient discovery failure")}}
+		_, err := missingCRDs(mgr, []schema.GroupVersionKind{httpRouteGVK})
+		if err == nil {
+			t.Fatal("expected error from missingCRDs")
 		}
 	})
 
