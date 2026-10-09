@@ -222,13 +222,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		gwNamespace = ext.Namespace
 	}
 
-	sectionName := ref.SectionName
-	if cfg.sectionName != "" {
-		sectionName = cfg.sectionName
-	}
+	sectionName := cfg.sectionName
 	if sectionName == "" {
-		return ctrl.Result{}, r.setNotRegistered(ctx, binding,
-			fmt.Sprintf("MCPGatewayExtension %q has no targetRef.sectionName; set %q in the ConfigMap", cfg.extensionName, configKeySectionName))
+		discovered, discoverErr := r.discoverWildcardListener(ctx, gwName, gwNamespace)
+		if discoverErr != nil {
+			return ctrl.Result{}, r.setNotRegistered(ctx, binding, discoverErr.Error())
+		}
+		sectionName = discovered
 	}
 
 	routeHostname := cfg.routeHostname
@@ -543,6 +543,34 @@ func (r *Reconciler) resolveHostname(ctx context.Context, mcpServerName, mcpServ
 	}
 
 	return "", fmt.Errorf("gateway %s/%s has no listener named %q", gwNamespace, gwName, sectionName)
+}
+
+func (r *Reconciler) discoverWildcardListener(ctx context.Context, gwName, gwNamespace string) (string, error) {
+	gw := &gatewayv1.Gateway{}
+	if err := r.Get(ctx, client.ObjectKey{Name: gwName, Namespace: gwNamespace}, gw); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", fmt.Errorf("gateway %s/%s not found", gwNamespace, gwName)
+		}
+		return "", err
+	}
+
+	var wildcardListeners []string
+	for _, listener := range gw.Spec.Listeners {
+		if listener.Hostname != nil && strings.HasPrefix(string(*listener.Hostname), "*.") {
+			wildcardListeners = append(wildcardListeners, string(listener.Name))
+		}
+	}
+
+	switch len(wildcardListeners) {
+	case 1:
+		return wildcardListeners[0], nil
+	case 0:
+		return "", fmt.Errorf("gateway %s/%s has no wildcard listeners; set %q and %q in the ConfigMap",
+			gwNamespace, gwName, configKeySectionName, configKeyRouteHostname)
+	default:
+		return "", fmt.Errorf("gateway %s/%s has multiple wildcard listeners (%s); set %q in the ConfigMap to select one",
+			gwNamespace, gwName, strings.Join(wildcardListeners, ", "), configKeySectionName)
+	}
 }
 
 func (r *Reconciler) resolvePublicEndpoint(ctx context.Context, ext *kuadrantapi.MCPGatewayExtension) (*publicEndpoint, error) {
