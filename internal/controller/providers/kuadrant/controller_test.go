@@ -2341,4 +2341,115 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(registered.Message).To(ContainSubstring("no wildcard listeners"))
 		Expect(registered.Message).To(ContainSubstring(configKeySectionName))
 	})
+
+	It("should error when Gateway not found and section-name is omitted", func() {
+		createMCPServer()
+
+		By("creating extension referencing a non-existent gateway")
+		ext := &kuadrantapi.MCPGatewayExtension{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      gatewayExtensionName,
+				Namespace: "gateway-ns",
+			},
+			Spec: kuadrantapi.MCPGatewayExtensionSpec{
+				PublicHost: "mcp.example.com",
+				TargetRef: kuadrantapi.TargetReference{
+					Group:       "gateway.networking.k8s.io",
+					Kind:        "Gateway",
+					Name:        "nonexistent-gateway",
+					Namespace:   "gateway-ns",
+					SectionName: "mcp",
+				},
+			},
+		}
+		ext.SetGroupVersionKind(kuadrantapi.SchemeGroupVersion.WithKind("MCPGatewayExtension"))
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, ext)).To(Succeed())
+		setExtensionReady(ctx, gatewayExtensionName)
+
+		createConfigMap(map[string]string{
+			configKeyExtensionName:      gatewayExtensionName,
+			configKeyExtensionNamespace: "gateway-ns",
+			configKeyPrefix:             "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Message).To(ContainSubstring("not found"))
+	})
+
+	It("should error when Gateway not found and section-name is set", func() {
+		createMCPServer()
+		createGatewayExtension("mcp.example.com", true)
+
+		createConfigMap(map[string]string{
+			configKeyExtensionName:      gatewayExtensionName,
+			configKeyExtensionNamespace: "gateway-ns",
+			configKeySectionName:        "mcps",
+			configKeyPrefix:             "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Message).To(ContainSubstring("not found"))
+	})
+
+	It("should error when section-name points to a listener with no hostname", func() {
+		createMCPServer()
+
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     "no-host",
+						Port:     80,
+						Protocol: gatewayv1.HTTPProtocolType,
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		createGatewayExtension("mcp.example.com", true)
+
+		createConfigMap(map[string]string{
+			configKeyExtensionName:      gatewayExtensionName,
+			configKeyExtensionNamespace: "gateway-ns",
+			configKeySectionName:        "no-host",
+			configKeyPrefix:             "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Message).To(ContainSubstring("no hostname"))
+		Expect(registered.Message).To(ContainSubstring(configKeyRouteHostname))
+	})
 })
