@@ -19,9 +19,7 @@ package framework
 import (
 	"context"
 	"fmt"
-	"maps"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -35,83 +33,6 @@ import (
 
 	kuadrantapi "github.com/kubernetes-sigs/mcp-lifecycle-operator/internal/controller/providers/kuadrant/api"
 )
-
-const (
-	configKeyGatewayName      = "gateway-name"
-	configKeyGatewayNamespace = "gateway-namespace"
-	configKeyGatewayClass     = "gateway-class"
-	configKeyRouteHostname    = "route-hostname"
-	configKeyPublicHostname   = "public-hostname"
-	configKeyExtensionName    = "extension-name"
-	configKeyExtensionNS      = "extension-namespace"
-	configKeyPrefix           = "prefix"
-
-	providerKuadrant = "kuadrant"
-
-	defaultRouteHostname = "mcp.e2e.test"
-)
-
-// ProviderConfig describes a gateway provider for conformance testing.
-type ProviderConfig struct {
-	Name       string
-	ConfigData map[string]string
-}
-
-// CopyConfigData returns a shallow copy of the provider's ConfigData map,
-// safe to mutate without affecting the global registry.
-func (p ProviderConfig) CopyConfigData() map[string]string {
-	cp := make(map[string]string, len(p.ConfigData))
-	maps.Copy(cp, p.ConfigData)
-	return cp
-}
-
-var providers = map[string]ProviderConfig{
-	"httproute": {
-		Name: "httproute",
-		ConfigData: map[string]string{
-			configKeyGatewayName:      "e2e-gateway",
-			configKeyGatewayNamespace: "gateway-system",
-			configKeyGatewayClass:     "eg",
-			configKeyRouteHostname:    defaultRouteHostname,
-			configKeyPublicHostname:   defaultRouteHostname,
-		},
-	},
-	providerKuadrant: {
-		Name: providerKuadrant,
-		ConfigData: map[string]string{
-			configKeyGatewayName:      "mcp-gateway",
-			configKeyGatewayNamespace: "gateway-system",
-			configKeyGatewayClass:     "istio",
-			configKeyRouteHostname:    defaultRouteHostname,
-			configKeyExtensionName:    "mcp-gateway-extension",
-			configKeyExtensionNS:      "mcp-system",
-			configKeyPrefix:           "e2e_",
-		},
-	},
-}
-
-// ActiveProvider returns the ProviderConfig selected by the GATEWAY_PROVIDER
-// environment variable. It fatals if the variable is unset or unknown.
-func ActiveProvider(t *testing.T) ProviderConfig {
-	t.Helper()
-	name := os.Getenv("GATEWAY_PROVIDER")
-	if name == "" {
-		t.Fatal("GATEWAY_PROVIDER environment variable is not set")
-	}
-	prov, ok := providers[name]
-	if !ok {
-		t.Fatalf("unknown gateway provider %q, available: %v", name, providerNames())
-	}
-	return prov
-}
-
-func providerNames() []string {
-	names := make([]string, 0, len(providers))
-	for n := range providers {
-		names = append(names, n)
-	}
-	return names
-}
 
 type hostOverrideTransport struct {
 	base http.RoundTripper
@@ -226,42 +147,6 @@ func WaitForExtensionReady(ctx context.Context, t *testing.T, cfg *envconf.Confi
 			t.Fatalf("timed out waiting for MCPGatewayExtension %s/%s to become ready", namespace, name)
 		}
 		time.Sleep(2 * time.Second)
-	}
-}
-
-// BuildControllerConfigData builds the ConfigMap data that the controller reads
-// based on the provider type. Kuadrant uses extension-based keys while httproute
-// uses gateway-name/gateway-namespace.
-func BuildControllerConfigData(prov ProviderConfig, sectionName string) map[string]string {
-	switch prov.Name {
-	case providerKuadrant:
-		data := map[string]string{
-			configKeyExtensionName: prov.ConfigData[configKeyExtensionName],
-			configKeyExtensionNS:   prov.ConfigData[configKeyExtensionNS],
-			configKeyPrefix:        prov.ConfigData[configKeyPrefix],
-		}
-		if sectionName != "" {
-			data["section-name"] = sectionName
-		}
-		if rh, ok := prov.ConfigData[configKeyRouteHostname]; ok {
-			data[configKeyRouteHostname] = rh
-		}
-		return data
-	default:
-		data := map[string]string{
-			configKeyGatewayName:      prov.ConfigData[configKeyGatewayName],
-			configKeyGatewayNamespace: prov.ConfigData[configKeyGatewayNamespace],
-		}
-		if sectionName != "" {
-			data["section-name"] = sectionName
-		}
-		if rh, ok := prov.ConfigData[configKeyRouteHostname]; ok {
-			data[configKeyRouteHostname] = rh
-		}
-		if ph, ok := prov.ConfigData[configKeyPublicHostname]; ok {
-			data[configKeyPublicHostname] = ph
-		}
-		return data
 	}
 }
 
@@ -416,12 +301,4 @@ func EnsureReferenceGrant(ctx context.Context, t *testing.T, cfg *envconf.Config
 	t.Cleanup(func() {
 		_ = r.Delete(context.Background(), grant)
 	})
-}
-
-func init() {
-	for name, p := range providers {
-		if p.Name != name {
-			panic(fmt.Sprintf("provider config key %q does not match Name %q", name, p.Name))
-		}
-	}
 }

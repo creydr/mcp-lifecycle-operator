@@ -39,7 +39,7 @@ import (
 )
 
 func TestKuadrantProviderResources(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-kuadrant-config"
 
 	feature := features.New("Kuadrant provider: resources").
@@ -48,15 +48,11 @@ func TestKuadrantProviderResources(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
-
-			f.WaitForExtensionReady(ctx, t, cfg, prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"])
-
-			configData := f.BuildControllerConfigData(prov, listenerName)
+			prov.Setup(ctx, t, cfg, ns)
+			configData := prov.ConfigData()
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "kuadrant-resources", false,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 
@@ -131,7 +127,7 @@ func TestKuadrantProviderResources(t *testing.T) {
 }
 
 func TestKuadrantAutoConstructedHostname(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-auto-hostname-config"
 
 	feature := features.New("Kuadrant: auto-constructed hostname from wildcard listener").
@@ -140,11 +136,13 @@ func TestKuadrantAutoConstructedHostname(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
+			ensureScheme(t, cfg.Client().Resources().GetScheme())
+			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.gatewayNamespace)
+			_, gwClass := f.DiscoverGateway(ctx, t, cfg, prov.gatewayName, prov.gatewayNamespace)
 
 			wildcard := gatewayv1.Hostname("*.mcp.local")
 			f.EnsureMultiListenerGateway(ctx, t, cfg,
-				"kuadrant-wildcard-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+				"kuadrant-wildcard-gw", prov.gatewayNamespace, gwClass,
 				[]f.ListenerSpec{
 					{Name: "mcps", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &wildcard},
 				},
@@ -152,7 +150,7 @@ func TestKuadrantAutoConstructedHostname(t *testing.T) {
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"auto-host-ext", ns,
-				"kuadrant-wildcard-gw", prov.ConfigData["gateway-namespace"],
+				"kuadrant-wildcard-gw", prov.gatewayNamespace,
 				f.WithSectionName("mcps"),
 			)
 			f.WaitForExtensionReady(ctx, t, cfg, "auto-host-ext", ns)
@@ -161,11 +159,11 @@ func TestKuadrantAutoConstructedHostname(t *testing.T) {
 				"extension-name":      "auto-host-ext",
 				"extension-namespace": ns,
 				"section-name":        "mcps",
-				"prefix":              prov.ConfigData["prefix"],
+				"prefix":              prov.prefix,
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "auto-host", false,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 			return ctx
@@ -204,7 +202,7 @@ func TestKuadrantAutoConstructedHostname(t *testing.T) {
 }
 
 func TestKuadrantDefaultSectionName(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-default-section-config"
 
 	feature := features.New("Kuadrant: default sectionName mcps").
@@ -213,11 +211,13 @@ func TestKuadrantDefaultSectionName(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
+			ensureScheme(t, cfg.Client().Resources().GetScheme())
+			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.gatewayNamespace)
+			_, gwClass := f.DiscoverGateway(ctx, t, cfg, prov.gatewayName, prov.gatewayNamespace)
 
 			wildcard := gatewayv1.Hostname("*.mcp.local")
 			f.EnsureMultiListenerGateway(ctx, t, cfg,
-				"kuadrant-default-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+				"kuadrant-default-gw", prov.gatewayNamespace, gwClass,
 				[]f.ListenerSpec{
 					{Name: "mcps", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &wildcard},
 				},
@@ -225,7 +225,7 @@ func TestKuadrantDefaultSectionName(t *testing.T) {
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"default-ext", ns,
-				"kuadrant-default-gw", prov.ConfigData["gateway-namespace"],
+				"kuadrant-default-gw", prov.gatewayNamespace,
 				f.WithPublicHost("default-sec.public.example.com"),
 				f.WithSectionName("mcps"),
 			)
@@ -234,11 +234,11 @@ func TestKuadrantDefaultSectionName(t *testing.T) {
 			configData := map[string]string{
 				"extension-name":      "default-ext",
 				"extension-namespace": ns,
-				"prefix":              prov.ConfigData["prefix"],
+				"prefix":              prov.prefix,
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "default-sec", true,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 
@@ -271,7 +271,7 @@ func TestKuadrantDefaultSectionName(t *testing.T) {
 }
 
 func TestKuadrantPublicHostnamePriority(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-priority-config"
 
 	feature := features.New("Kuadrant: extension publicHost appears in status URL").
@@ -280,16 +280,18 @@ func TestKuadrantPublicHostnamePriority(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
+			ensureScheme(t, cfg.Client().Resources().GetScheme())
+			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.gatewayNamespace)
+			_, gwClass := f.DiscoverGateway(ctx, t, cfg, prov.gatewayName, prov.gatewayNamespace)
 
 			f.EnsureMultiListenerGateway(ctx, t, cfg,
-				"kuadrant-priority-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+				"kuadrant-priority-gw", prov.gatewayNamespace, gwClass,
 				[]f.ListenerSpec{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
 			)
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"priority-ext", ns,
-				"kuadrant-priority-gw", prov.ConfigData["gateway-namespace"],
+				"kuadrant-priority-gw", prov.gatewayNamespace,
 				f.WithPublicHost("extension.example.com"),
 				f.WithSectionName("http"),
 			)
@@ -300,11 +302,11 @@ func TestKuadrantPublicHostnamePriority(t *testing.T) {
 				"extension-namespace": ns,
 				"section-name":        "http",
 				"route-hostname":      "route.mcp.local",
-				"prefix":              prov.ConfigData["prefix"],
+				"prefix":              prov.prefix,
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "priority", true,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 
@@ -334,7 +336,7 @@ func TestKuadrantPublicHostnamePriority(t *testing.T) {
 }
 
 func TestKuadrantExtensionFallback(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-ext-fallback-config"
 
 	feature := features.New("Kuadrant: direct extension reference with publicHost").
@@ -343,11 +345,13 @@ func TestKuadrantExtensionFallback(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
+			ensureScheme(t, cfg.Client().Resources().GetScheme())
+			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.gatewayNamespace)
+			_, gwClass := f.DiscoverGateway(ctx, t, cfg, prov.gatewayName, prov.gatewayNamespace)
 
 			wildcard := gatewayv1.Hostname("*.mcp.local")
 			f.EnsureMultiListenerGateway(ctx, t, cfg,
-				"kuadrant-ext-fallback-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+				"kuadrant-ext-fallback-gw", prov.gatewayNamespace, gwClass,
 				[]f.ListenerSpec{
 					{Name: "mcp", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
 					{Name: "mcps", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &wildcard},
@@ -356,7 +360,7 @@ func TestKuadrantExtensionFallback(t *testing.T) {
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"fallback-ext", ns,
-				"kuadrant-ext-fallback-gw", prov.ConfigData["gateway-namespace"],
+				"kuadrant-ext-fallback-gw", prov.gatewayNamespace,
 				f.WithPublicHost("public.example.com"),
 				f.WithSectionName("mcp"),
 			)
@@ -366,11 +370,11 @@ func TestKuadrantExtensionFallback(t *testing.T) {
 				"extension-name":      "fallback-ext",
 				"extension-namespace": ns,
 				"section-name":        "mcps",
-				"prefix":              prov.ConfigData["prefix"],
+				"prefix":              prov.prefix,
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "ext-fallback", true,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 
@@ -430,7 +434,7 @@ func TestKuadrantExtensionFallback(t *testing.T) {
 }
 
 func TestKuadrantExtensionNotFound(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-ext-notfound-config"
 
 	feature := features.New("Kuadrant: GatewayRegistered=False when extension not found").
@@ -439,16 +443,16 @@ func TestKuadrantExtensionNotFound(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			ensureScheme(t, cfg.Client().Resources().GetScheme())
 
 			configData := map[string]string{
 				"extension-name":      "nonexistent-extension",
-				"extension-namespace": prov.ConfigData["gateway-namespace"],
-				"prefix":              prov.ConfigData["prefix"],
+				"extension-namespace": prov.gatewayNamespace,
+				"prefix":              prov.prefix,
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "ext-notfound", false,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 			return ctx
@@ -469,7 +473,7 @@ func TestKuadrantExtensionNotFound(t *testing.T) {
 }
 
 func TestKuadrantExtensionNotReady(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-ext-notready-config"
 
 	feature := features.New("Kuadrant: GatewayRegistered=False when extension not ready").
@@ -478,13 +482,12 @@ func TestKuadrantExtensionNotReady(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
-
-			f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			ensureScheme(t, cfg.Client().Resources().GetScheme())
+			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.gatewayNamespace)
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"notready-ext", ns,
-				"nonexistent-gateway", prov.ConfigData["gateway-namespace"],
+				"nonexistent-gateway", prov.gatewayNamespace,
 				f.WithPublicHost("notready.example.com"),
 				f.WithSectionName("mcp"),
 			)
@@ -492,11 +495,11 @@ func TestKuadrantExtensionNotReady(t *testing.T) {
 			configData := map[string]string{
 				"extension-name":      "notready-ext",
 				"extension-namespace": ns,
-				"prefix":              prov.ConfigData["prefix"],
+				"prefix":              prov.prefix,
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "ext-notready", false,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 			return ctx
@@ -517,7 +520,7 @@ func TestKuadrantExtensionNotReady(t *testing.T) {
 }
 
 func TestKuadrantCrossNamespaceExtension(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-cross-ns-config"
 
 	feature := features.New("Kuadrant: cross-namespace extension reference").
@@ -526,10 +529,12 @@ func TestKuadrantCrossNamespaceExtension(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
+			ensureScheme(t, cfg.Client().Resources().GetScheme())
+			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.gatewayNamespace)
+			_, gwClass := f.DiscoverGateway(ctx, t, cfg, prov.gatewayName, prov.gatewayNamespace)
 
 			f.EnsureMultiListenerGateway(ctx, t, cfg,
-				"kuadrant-cross-ns-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+				"kuadrant-cross-ns-gw", prov.gatewayNamespace, gwClass,
 				[]f.ListenerSpec{
 					{Name: "mcp", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
 				},
@@ -537,7 +542,7 @@ func TestKuadrantCrossNamespaceExtension(t *testing.T) {
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"cross-ns-ext", ns,
-				"kuadrant-cross-ns-gw", prov.ConfigData["gateway-namespace"],
+				"kuadrant-cross-ns-gw", prov.gatewayNamespace,
 				f.WithPublicHost("cross-ns.example.com"),
 				f.WithSectionName("mcp"),
 			)
@@ -548,11 +553,11 @@ func TestKuadrantCrossNamespaceExtension(t *testing.T) {
 				"extension-namespace": ns,
 				"section-name":        "mcp",
 				"route-hostname":      "cross-ns.mcp.local",
-				"prefix":              prov.ConfigData["prefix"],
+				"prefix":              prov.prefix,
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "cross-ns", true,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 
@@ -582,7 +587,7 @@ func TestKuadrantCrossNamespaceExtension(t *testing.T) {
 }
 
 func TestKuadrantPublicAddressPending(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-pubaddr-pending-config"
 
 	feature := features.New("Kuadrant: PublicAddressPending when wildcard listener and no publicHost").
@@ -591,11 +596,13 @@ func TestKuadrantPublicAddressPending(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
+			ensureScheme(t, cfg.Client().Resources().GetScheme())
+			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.gatewayNamespace)
+			_, gwClass := f.DiscoverGateway(ctx, t, cfg, prov.gatewayName, prov.gatewayNamespace)
 
 			wildcard := gatewayv1.Hostname("*.mcp.local")
 			f.EnsureMultiListenerGateway(ctx, t, cfg,
-				"kuadrant-pubaddr-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+				"kuadrant-pubaddr-gw", prov.gatewayNamespace, gwClass,
 				[]f.ListenerSpec{
 					{Name: "mcps", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &wildcard},
 				},
@@ -603,7 +610,7 @@ func TestKuadrantPublicAddressPending(t *testing.T) {
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"pubaddr-ext", ns,
-				"kuadrant-pubaddr-gw", prov.ConfigData["gateway-namespace"],
+				"kuadrant-pubaddr-gw", prov.gatewayNamespace,
 				f.WithSectionName("mcps"),
 			)
 			f.WaitForExtensionReady(ctx, t, cfg, "pubaddr-ext", ns)
@@ -612,11 +619,11 @@ func TestKuadrantPublicAddressPending(t *testing.T) {
 				"extension-name":      "pubaddr-ext",
 				"extension-namespace": ns,
 				"section-name":        "mcps",
-				"prefix":              prov.ConfigData["prefix"],
+				"prefix":              prov.prefix,
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "pubaddr-pend", false,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 			return ctx
@@ -639,7 +646,7 @@ func TestKuadrantPublicAddressPending(t *testing.T) {
 }
 
 func TestKuadrantListenerHostnameFallback(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-listener-fallback-config"
 
 	feature := features.New("Kuadrant: fallback to listener hostname when extension has no publicHost").
@@ -648,11 +655,13 @@ func TestKuadrantListenerHostnameFallback(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
+			ensureScheme(t, cfg.Client().Resources().GetScheme())
+			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.gatewayNamespace)
+			_, gwClass := f.DiscoverGateway(ctx, t, cfg, prov.gatewayName, prov.gatewayNamespace)
 
 			listenerHost := gatewayv1.Hostname("listener.mcp.local")
 			f.EnsureMultiListenerGateway(ctx, t, cfg,
-				"kuadrant-listener-fallback-gw", prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"],
+				"kuadrant-listener-fallback-gw", prov.gatewayNamespace, gwClass,
 				[]f.ListenerSpec{
 					{Name: "mcp", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &listenerHost},
 				},
@@ -660,7 +669,7 @@ func TestKuadrantListenerHostnameFallback(t *testing.T) {
 
 			f.CreateMCPGatewayExtension(ctx, t, cfg,
 				"listener-ext", ns,
-				"kuadrant-listener-fallback-gw", prov.ConfigData["gateway-namespace"],
+				"kuadrant-listener-fallback-gw", prov.gatewayNamespace,
 				f.WithSectionName("mcp"),
 			)
 			f.WaitForExtensionReady(ctx, t, cfg, "listener-ext", ns)
@@ -670,11 +679,11 @@ func TestKuadrantListenerHostnameFallback(t *testing.T) {
 				"extension-namespace": ns,
 				"section-name":        "mcp",
 				"route-hostname":      "listener.mcp.local",
-				"prefix":              prov.ConfigData["prefix"],
+				"prefix":              prov.prefix,
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "listener-fb", true,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 
@@ -704,7 +713,7 @@ func TestKuadrantListenerHostnameFallback(t *testing.T) {
 }
 
 func TestKuadrantAutoGeneratedPrefix(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-auto-prefix-config"
 
 	feature := features.New("Kuadrant: auto-generated prefix from MCPServer name and namespace").
@@ -713,16 +722,12 @@ func TestKuadrantAutoGeneratedPrefix(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
-
-			f.WaitForExtensionReady(ctx, t, cfg, prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"])
-
-			configData := f.BuildControllerConfigData(prov, listenerName)
+			prov.Setup(ctx, t, cfg, ns)
+			configData := prov.ConfigData()
 			delete(configData, "prefix")
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "auto-prefix", false,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 
@@ -765,7 +770,7 @@ func TestKuadrantAutoGeneratedPrefix(t *testing.T) {
 }
 
 func TestKuadrantExplicitPrefixOverride(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newKuadrantProvider()
 	const configMapName = "gw-explicit-prefix-config"
 
 	feature := features.New("Kuadrant: explicit prefix overrides auto-generation").
@@ -774,16 +779,12 @@ func TestKuadrantExplicitPrefixOverride(t *testing.T) {
 		WithLabel(scope.Label, scope.Kuadrant).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			f.EnsureReferenceGrant(ctx, t, cfg, ns, prov.ConfigData["gateway-namespace"])
-
-			f.WaitForExtensionReady(ctx, t, cfg, prov.ConfigData["extension-name"], prov.ConfigData["extension-namespace"])
-
-			configData := f.BuildControllerConfigData(prov, listenerName)
+			prov.Setup(ctx, t, cfg, ns)
+			configData := prov.ConfigData()
 			configData["prefix"] = "custom_explicit_"
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "explicit-pfx", false,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 

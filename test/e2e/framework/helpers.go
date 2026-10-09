@@ -408,24 +408,15 @@ func WaitForEndpointsReady(ctx context.Context, t *testing.T, cfg *envconf.Confi
 }
 
 // CreateGatewayConfigMap creates a ConfigMap with gateway integration settings.
-// It copies all entries from configData except the gateway-class key, which is
-// not a ConfigMap key but a provider registration detail.
 func CreateGatewayConfigMap(ctx context.Context, t *testing.T, cfg *envconf.Config,
 	name, namespace string, configData map[string]string) {
 	t.Helper()
-	data := make(map[string]string, len(configData))
-	for k, v := range configData {
-		if k == configKeyGatewayClass {
-			continue
-		}
-		data[k] = v
-	}
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Data: data,
+		Data: configData,
 	}
 	if err := cfg.Client().Resources().Create(ctx, cm); err != nil {
 		t.Fatalf("failed to create gateway ConfigMap: %v", err)
@@ -534,6 +525,26 @@ func EnsureGateway(ctx context.Context, t *testing.T, cfg *envconf.Config,
 
 	t.Logf("ensured Gateway %s/%s (class=%s, listener=%s)", namespace, name, gatewayClassName, listenerName)
 	return listenerName
+}
+
+// DiscoverGateway reads an existing Gateway and returns its first listener name
+// and gateway class name. Use this instead of EnsureGateway when the gateway was
+// already created by lifecycle hooks and you only need to discover its properties.
+func DiscoverGateway(ctx context.Context, t *testing.T, cfg *envconf.Config,
+	name, namespace string) (listenerName, gatewayClassName string) {
+	t.Helper()
+	r := cfg.Client().Resources()
+	gw := &gatewayv1.Gateway{}
+	if err := r.Get(ctx, name, namespace, gw); err != nil {
+		t.Fatalf("failed to read Gateway %s/%s: %v", namespace, name, err)
+	}
+	gatewayClassName = string(gw.Spec.GatewayClassName)
+	listenerName = defaultListenerName
+	if len(gw.Spec.Listeners) > 0 {
+		listenerName = string(gw.Spec.Listeners[0].Name)
+	}
+	t.Logf("discovered Gateway %s/%s (class=%s, listener=%s)", namespace, name, gatewayClassName, listenerName)
+	return listenerName, gatewayClassName
 }
 
 // WaitForBindingRegistered polls until the MCPGatewayBinding's Registered condition
