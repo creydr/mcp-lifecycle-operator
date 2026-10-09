@@ -247,7 +247,7 @@ deploy-test-e2e-gateway: deploy-test-e2e deploy-cloud-provider-kind ## Deploy op
 
 .PHONY: test-e2e-gateway
 test-e2e-gateway: ## Run gateway e2e tests for a specific provider (set GATEWAY_PROVIDER=httproute|kuadrant).
-	GATEWAY_PROVIDER=$(GATEWAY_PROVIDER) go test -tags=e2e ./test/e2e/gateway/... -v -count=1 -timeout 1h -profile gateway-$(GATEWAY_PROVIDER)
+	go test -tags=e2e ./test/e2e/gateway/$(GATEWAY_PROVIDER)/... -v -count=1 -timeout 1h -profile gateway-$(GATEWAY_PROVIDER)
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: stop-cloud-provider-kind ## Tear down the Kind cluster used for e2e tests

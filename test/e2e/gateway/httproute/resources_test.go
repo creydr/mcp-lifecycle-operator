@@ -37,7 +37,7 @@ import (
 )
 
 func TestHTTPRouteProviderResources(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newHTTPRouteProvider()
 	const configMapName = "gw-httproute-config"
 
 	feature := features.New("HTTPRoute provider: resources").
@@ -46,12 +46,11 @@ func TestHTTPRouteProviderResources(t *testing.T) {
 		WithLabel(scope.Label, scope.HTTPRoute).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			configData := prov.CopyConfigData()
-			configData["section-name"] = listenerName
+			prov.Setup(ctx, t, cfg, ns)
+			configData := prov.ConfigData()
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "httproute-resources", false,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 
@@ -80,8 +79,8 @@ func TestHTTPRouteProviderResources(t *testing.T) {
 			if len(route.Spec.ParentRefs) != 1 {
 				t.Fatalf("expected 1 parentRef, got %d", len(route.Spec.ParentRefs))
 			}
-			gwName := prov.ConfigData["gateway-name"]
-			gwNamespace := prov.ConfigData["gateway-namespace"]
+			gwName := prov.gatewayName
+			gwNamespace := prov.gatewayNamespace
 			if string(route.Spec.ParentRefs[0].Name) != gwName {
 				t.Fatalf("expected parentRef name %s, got %s", gwName, route.Spec.ParentRefs[0].Name)
 			}
@@ -96,7 +95,7 @@ func TestHTTPRouteProviderResources(t *testing.T) {
 				t.Fatalf("expected backendRef name %s, got %s", server.Name, route.Spec.Rules[0].BackendRefs[0].Name)
 			}
 
-			hostname := prov.ConfigData["route-hostname"]
+			hostname := "mcp.e2e.test"
 			if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != hostname {
 				t.Fatalf("expected hostname %s, got %v", hostname, route.Spec.Hostnames)
 			}
@@ -117,7 +116,7 @@ func TestHTTPRouteProviderResources(t *testing.T) {
 }
 
 func TestHTTPRouteFallbackToRouteHostname(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newHTTPRouteProvider()
 	const configMapName = "gw-fallback-route-config"
 
 	feature := features.New("HTTPRoute: fallback to route-hostname").
@@ -126,17 +125,17 @@ func TestHTTPRouteFallbackToRouteHostname(t *testing.T) {
 		WithLabel(scope.Label, scope.HTTPRoute).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
+			prov.Setup(ctx, t, cfg, ns)
 
 			configData := map[string]string{
-				"gateway-name":      prov.ConfigData["gateway-name"],
-				"gateway-namespace": prov.ConfigData["gateway-namespace"],
-				"section-name":      listenerName,
+				"gateway-name":      prov.gatewayName,
+				"gateway-namespace": prov.gatewayNamespace,
+				"section-name":      prov.sectionName,
 				"route-hostname":    "route.mcp.local",
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "fallback-route", true,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 
@@ -166,7 +165,7 @@ func TestHTTPRouteFallbackToRouteHostname(t *testing.T) {
 }
 
 func TestHTTPRouteFallbackToGatewayAddress(t *testing.T) {
-	prov := f.ActiveProvider(t)
+	prov := newHTTPRouteProvider()
 	const configMapName = "gw-fallback-addr-config"
 
 	var gwAddr string
@@ -177,17 +176,17 @@ func TestHTTPRouteFallbackToGatewayAddress(t *testing.T) {
 		WithLabel(scope.Label, scope.HTTPRoute).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			ns := ctx.Value(f.NsKey).(string)
-			listenerName := f.EnsureGateway(ctx, t, cfg, prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"], prov.ConfigData["gateway-class"])
-			gwAddr = f.WaitForGatewayAddress(ctx, t, cfg.Client().Resources(), prov.ConfigData["gateway-name"], prov.ConfigData["gateway-namespace"])
+			prov.Setup(ctx, t, cfg, ns)
+			gwAddr = prov.GatewayAddress(ctx, t, cfg)
 
 			configData := map[string]string{
-				"gateway-name":      prov.ConfigData["gateway-name"],
-				"gateway-namespace": prov.ConfigData["gateway-namespace"],
-				"section-name":      listenerName,
+				"gateway-name":      prov.gatewayName,
+				"gateway-namespace": prov.gatewayNamespace,
+				"section-name":      prov.sectionName,
 			}
 			f.CreateGatewayConfigMap(ctx, t, cfg, configMapName, ns, configData)
 			ctx = f.SetupMCPServer(ctx, t, cfg, "fallback-addr", true,
-				f.WithGateway(prov.Name, configMapName),
+				f.WithGateway(prov.Name(), configMapName),
 				f.WithPath("/mcp"),
 			)
 
