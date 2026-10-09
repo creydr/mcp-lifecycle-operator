@@ -464,72 +464,9 @@ func WaitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resou
 	}
 }
 
-// EnsureGateway creates a GatewayClass, namespace, and Gateway resource if they don't
-// already exist. The Gateway allows routes from all namespaces so that HTTPRoutes
-// created in per-test namespaces are accepted by the gateway controller.
-// It returns the listener name. Use WaitForGatewayAddress to obtain the LB address.
-func EnsureGateway(ctx context.Context, t *testing.T, cfg *envconf.Config,
-	name, namespace, gatewayClassName string) string {
-	t.Helper()
-	r := cfg.Client().Resources()
-
-	gc := &gatewayv1.GatewayClass{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: gatewayClassName,
-		},
-		Spec: gatewayv1.GatewayClassSpec{
-			ControllerName: "gateway.envoyproxy.io/gatewayclass-controller",
-		},
-	}
-	if err := r.Create(ctx, gc); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("failed to create GatewayClass %s: %v", gatewayClassName, err)
-	}
-
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
-	if err := r.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("failed to create namespace %s: %v", namespace, err)
-	}
-
-	fromAll := gatewayv1.NamespacesFromAll
-	gw := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: gatewayv1.GatewaySpec{
-			GatewayClassName: gatewayv1.ObjectName(gatewayClassName),
-			Listeners: []gatewayv1.Listener{{
-				Name:     defaultListenerName,
-				Protocol: gatewayv1.HTTPProtocolType,
-				Port:     80,
-				AllowedRoutes: &gatewayv1.AllowedRoutes{
-					Namespaces: &gatewayv1.RouteNamespaces{
-						From: &fromAll,
-					},
-				},
-			}},
-		},
-	}
-	if err := r.Create(ctx, gw); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("failed to create Gateway %s/%s: %v", namespace, name, err)
-	}
-
-	existing := &gatewayv1.Gateway{}
-	if err := r.Get(ctx, name, namespace, existing); err != nil {
-		t.Fatalf("failed to read Gateway %s/%s: %v", namespace, name, err)
-	}
-	listenerName := defaultListenerName
-	if len(existing.Spec.Listeners) > 0 {
-		listenerName = string(existing.Spec.Listeners[0].Name)
-	}
-
-	t.Logf("ensured Gateway %s/%s (class=%s, listener=%s)", namespace, name, gatewayClassName, listenerName)
-	return listenerName
-}
-
 // DiscoverGateway reads an existing Gateway and returns its first listener name
-// and gateway class name. Use this instead of EnsureGateway when the gateway was
-// already created by lifecycle hooks and you only need to discover its properties.
+// and gateway class name. The gateway is expected to have been created by
+// lifecycle hooks.
 func DiscoverGateway(ctx context.Context, t *testing.T, cfg *envconf.Config,
 	name, namespace string) (listenerName, gatewayClassName string) {
 	t.Helper()
