@@ -2136,6 +2136,150 @@ var _ = Describe("Kuadrant Provider Controller", func() {
 		Expect(registered.Message).To(ContainSubstring(configKeySectionName))
 	})
 
+	It("should use direct hostname when section-name points to an HTTP listener with non-wildcard hostname", func() {
+		createMCPServer()
+
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     "direct",
+						Port:     80,
+						Protocol: gatewayv1.HTTPProtocolType,
+						Hostname: hostnamePtr("mcp.example.com"),
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		createGatewayExtension("mcp.example.com", true)
+
+		createConfigMap(map[string]string{
+			configKeyExtensionName:      gatewayExtensionName,
+			configKeyExtensionNamespace: "gateway-ns",
+			configKeySectionName:        "direct",
+			configKeyPrefix:             "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		Expect(route.Spec.Hostnames).To(HaveLen(1))
+		Expect(string(route.Spec.Hostnames[0])).To(Equal("mcp.example.com"))
+		Expect(route.Spec.ParentRefs[0].SectionName).NotTo(BeNil())
+		Expect(string(*route.Spec.ParentRefs[0].SectionName)).To(Equal("direct"))
+	})
+
+	It("should error when section-name points to an HTTPS listener with non-wildcard hostname", func() {
+		createMCPServer()
+
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     "secure-direct",
+						Port:     443,
+						Protocol: gatewayv1.HTTPSProtocolType,
+						Hostname: hostnamePtr("mcp.example.com"),
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		createGatewayExtension("mcp.example.com", true)
+
+		createConfigMap(map[string]string{
+			configKeyExtensionName:      gatewayExtensionName,
+			configKeyExtensionNamespace: "gateway-ns",
+			configKeySectionName:        "secure-direct",
+			configKeyPrefix:             "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionFalse))
+		Expect(registered.Message).To(ContainSubstring("HTTPS"))
+		Expect(registered.Message).To(ContainSubstring("wildcard"))
+	})
+
+	It("should set status warning when using direct hostname listener", func() {
+		createMCPServer()
+
+		gw := &gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-gateway",
+				Namespace: "gateway-ns",
+			},
+			Spec: gatewayv1.GatewaySpec{
+				GatewayClassName: "test",
+				Listeners: []gatewayv1.Listener{
+					{
+						Name:     "direct",
+						Port:     80,
+						Protocol: gatewayv1.HTTPProtocolType,
+						Hostname: hostnamePtr("mcp.example.com"),
+					},
+				},
+			},
+		}
+		ensureGatewayNamespace(ctx)
+		Expect(k8sClient.Create(ctx, gw)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, gw) }()
+
+		createGatewayExtension("mcp.example.com", true)
+
+		createConfigMap(map[string]string{
+			configKeyExtensionName:      gatewayExtensionName,
+			configKeyExtensionNamespace: "gateway-ns",
+			configKeySectionName:        "direct",
+			configKeyPrefix:             "myserver_",
+		})
+		createBinding()
+
+		_, err := doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		route := &gatewayv1.HTTPRoute{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, route)).To(Succeed())
+		setHTTPRouteAccepted(ctx, route)
+		setRegistrationReady(ctx, bindingName, testNamespace)
+
+		_, err = doReconcile()
+		Expect(err).NotTo(HaveOccurred())
+
+		binding := &mcpv1alpha1.MCPGatewayBinding{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: bindingName, Namespace: testNamespace}, binding)).To(Succeed())
+		registered := meta.FindStatusCondition(binding.Status.Conditions, mcpcontroller.ConditionTypeRegistered)
+		Expect(registered).NotTo(BeNil())
+		Expect(registered.Status).To(Equal(metav1.ConditionTrue))
+		Expect(registered.Message).To(ContainSubstring("direct hostname"))
+	})
+
 	It("should error when no wildcard listeners found and section-name is omitted", func() {
 		createMCPServer()
 
