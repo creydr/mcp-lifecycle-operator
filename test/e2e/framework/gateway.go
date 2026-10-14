@@ -84,7 +84,7 @@ func CreateMCPGatewayExtension(ctx context.Context, t *testing.T, cfg *envconf.C
 
 	ext := &kuadrantapi.MCPGatewayExtension{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "mcp.kuadrant.io/v1alpha1",
+			APIVersion: "mcp.kuadrant.io/v1",
 			Kind:       "MCPGatewayExtension",
 		},
 		ObjectMeta: metav1.ObjectMeta{
