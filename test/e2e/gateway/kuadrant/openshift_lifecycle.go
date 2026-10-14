@@ -273,7 +273,7 @@ func setupGatewayInfrastructure(ctx context.Context, r *resources.Resources) err
 
 	ext := &kuadrantapi.MCPGatewayExtension{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "mcp.kuadrant.io/v1alpha1",
+			APIVersion: "mcp.kuadrant.io/v1",
 			Kind:       "MCPGatewayExtension",
 		},
 		ObjectMeta: metav1.ObjectMeta{
