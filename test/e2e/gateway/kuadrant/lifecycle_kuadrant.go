@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	mcpGatewayVersion  = "v0.9.0"
+	mcpGatewayVersion  = "v1.0.1"
 	gatewayNamespace   = "gateway-system"
 	gatewayName        = "mcp-gateway"
 	mcpSystemNamespace = "mcp-system"
