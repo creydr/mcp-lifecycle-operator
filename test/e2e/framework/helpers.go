@@ -463,14 +463,21 @@ func WaitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resou
 				dnsDeadline := time.Now().Add(5 * time.Minute)
 				t.Logf("waiting for DNS resolution of %s ...", addr)
 				for {
-					if _, err := net.LookupHost(addr); err == nil {
+					lookupCtx, lookupCancel := context.WithTimeout(ctx, 10*time.Second)
+					_, err := net.DefaultResolver.LookupHost(lookupCtx, addr)
+					lookupCancel()
+					if err == nil {
 						t.Logf("DNS resolved %s", addr)
 						break
 					}
 					if time.Now().After(dnsDeadline) {
 						t.Fatalf("timed out waiting for DNS resolution of gateway address %s", addr)
 					}
-					time.Sleep(5 * time.Second)
+					select {
+					case <-ctx.Done():
+						t.Fatalf("context cancelled while waiting for DNS resolution of %s", addr)
+					case <-time.After(5 * time.Second):
+					}
 				}
 			}
 			return addr
