@@ -82,7 +82,7 @@ func (l *rhclLifecycle) Setup(ctx context.Context, cfg *envconf.Config) error {
 	r := cfg.Client().Resources()
 
 	log.Println("waiting for mcp-gateway-controller (provided by RHCL)...")
-	if err := waitForDeploymentAvailable(ctx, r, "mcp-gateway-controller", 5*time.Minute); err != nil {
+	if err := waitForDeploymentAvailable(ctx, r, "app.kubernetes.io/name=mcp-gateway,component=controller", 5*time.Minute); err != nil {
 		return fmt.Errorf("mcp-gateway-controller not available: %w", err)
 	}
 
@@ -214,20 +214,17 @@ func setupRHCLGatewayInfrastructure(ctx context.Context, r *resources.Resources)
 	return nil
 }
 
-func waitForDeploymentAvailable(ctx context.Context, r *resources.Resources, name string, timeout time.Duration) error {
+func waitForDeploymentAvailable(ctx context.Context, r *resources.Resources, labelSelector string, timeout time.Duration) error {
 	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true,
 		func(ctx context.Context) (bool, error) {
 			depList := &unstructured.UnstructuredList{}
 			depList.SetGroupVersionKind(schema.GroupVersionKind{
 				Group: "apps", Version: "v1", Kind: "DeploymentList",
 			})
-			if err := r.List(ctx, depList); err != nil {
+			if err := r.List(ctx, depList, resources.WithLabelSelector(labelSelector)); err != nil {
 				return false, nil
 			}
 			for i := range depList.Items {
-				if depList.Items[i].GetName() != name {
-					continue
-				}
 				conditions, _, _ := unstructured.NestedSlice(depList.Items[i].Object, "status", "conditions")
 				for _, c := range conditions {
 					cond, ok := c.(map[string]any)
