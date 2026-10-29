@@ -461,7 +461,7 @@ func WaitForGatewayAddress(ctx context.Context, t *testing.T, r *resources.Resou
 			// LoadBalancer addresses that may take time to propagate
 			// in DNS. Wait for resolution before returning.
 			if net.ParseIP(addr) == nil {
-				dnsTimeout := 5 * time.Minute
+				dnsTimeout := 15 * time.Minute
 				if v := os.Getenv("E2E_DNS_TIMEOUT"); v != "" {
 					if d, err := time.ParseDuration(v); err == nil {
 						dnsTimeout = d
