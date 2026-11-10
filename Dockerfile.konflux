@@ -1,4 +1,4 @@
-FROM registry.access.redhat.com/ubi9/go-toolset@sha256:0e3894cea4fc077084245e8aa2befc8a7d91a4f60fbf850f0b5b555cbe62ee26 AS builder
+FROM registry.access.redhat.com/ubi10/go-toolset@sha256:e94c38ff4a099b755af60c73ac87198c613f369eb7f818d45c96fbc3f21047de AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETPLATFORM
@@ -11,12 +11,10 @@ ENV GOEXPERIMENT=strictfipsruntime
 ENV GOTOOLCHAIN=local
 RUN make -f Makefile-ocp.mk build-ocp GO_BUILD_ENV="GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH}"
 
-FROM --platform=$TARGETPLATFORM registry.access.redhat.com/ubi9/ubi-minimal@sha256:f26ef64172ea61f5ac5ba4be8c5c738bf8760b22b3e5148ce7b40f7308ab32db AS crypto-policy
-RUN microdnf install -y crypto-policies-scripts && \
-    update-crypto-policies --set DEFAULT:PQ --no-reload
-
-FROM --platform=$TARGETPLATFORM registry.access.redhat.com/ubi9/ubi-minimal@sha256:f26ef64172ea61f5ac5ba4be8c5c738bf8760b22b3e5148ce7b40f7308ab32db
-COPY --from=crypto-policy /etc/crypto-policies /etc/crypto-policies
+FROM --platform=$TARGETPLATFORM registry.access.redhat.com/ubi10/ubi-minimal@sha256:f0c7b9ae9914fcf183e7c36fc46864903c2d2caf3af327421913ae54b3d29e94
+# UBI 10 ships post-quantum (hybrid ML-KEM) key exchange in the DEFAULT
+# crypto policy out of the box, so the UBI 9 "DEFAULT:PQ" opt-in stage is
+# no longer required (the PQ subpolicy no longer exists on RHEL 10).
 WORKDIR /
 COPY --from=builder /workspace/manager .
 RUN mkdir /licenses
@@ -26,12 +24,12 @@ USER 65532:65532
 
 # Labels for enterprise contract
 LABEL com.redhat.component=mcp-lifecycle-operator
-LABEL cpe="cpe:/a:redhat:mcp_lifecycle_operator:0.1::el9"
+LABEL cpe="cpe:/a:redhat:mcp_lifecycle_operator:0.1::el10"
 LABEL description="MCP lifecycle operator"
 LABEL io.k8s.description="MCP lifecycle operator"
 LABEL io.k8s.display-name="MCP lifecycle operator"
 LABEL io.openshift.tags="openshift,mcp,operator"
-LABEL name="mcp-lifecycle-operator-beta/mcp-lifecycle-rhel9-operator"
+LABEL name="mcp-lifecycle-operator-beta/mcp-lifecycle-rhel10-operator"
 LABEL release=0.1.0
 LABEL url="https://github.com/opendatahub-io/mcp-lifecycle-operator"
 LABEL vendor="Red Hat, Inc."
