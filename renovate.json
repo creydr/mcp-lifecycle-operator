@@ -1,11 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "github>opendatahub-io/renovate-config",
-    "github>konflux-ci/mintmaker-presets:refresh-rpm-lockfiles"
+    "github>opendatahub-io/renovate-config"
   ],
   "commitMessagePrefix": "[{{baseBranch}}]",
-  "enabledManagers": ["dockerfile", "tekton", "rpm-lockfile"],
+  "enabledManagers": ["dockerfile", "tekton"],
   "ignorePaths": ["docs/**", "hack/**"],
   "dockerfile": {
     "schedule": ["at any time"]
