@@ -24,6 +24,13 @@ image-e2e: ## Build e2e test container image locally.
 test-disruptive: ## Run the disruptive DSC-toggle tests (ODH/RHOAI only; destructive, mutates the shared DataScienceCluster). Skips when no DSC is present.
 	go test -tags=disruptive ./test/disruptive/ -v -count=1 -timeout 1h
 
+RPM_LOCKFILE_IMAGE ?= rpm-lockfile-prototype:local
+
+.PHONY: rpm-lockfile
+rpm-lockfile: ## Generate rpms.lock.yaml from rpms.in.yaml.
+	$(CONTAINER_TOOL) build -f Containerfile -t $(RPM_LOCKFILE_IMAGE) https://github.com/konflux-ci/rpm-lockfile-prototype.git
+	$(CONTAINER_TOOL) run --rm -v $(shell pwd):/work:Z $(RPM_LOCKFILE_IMAGE) --outfile=rpms.lock.yaml rpms.in.yaml
+
 .PHONY: build-ocp
 build-ocp: clean
 	CGO_ENABLED=1 $(GO_BUILD_ENV) go build $(COMMON_BUILD_ARGS) -tags=strictfipsruntime -mod=readonly -a -o manager ./cmd
